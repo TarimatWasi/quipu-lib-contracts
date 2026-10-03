@@ -163,7 +163,10 @@ paths:
         "202":
           description: >
             Always 202, whether the email exists or not (generic response
-            by design — never reveals account existence, RF-16).
+            by design — never reveals account existence, RF-16). When the
+            account exists and is active, the email carries a link with a
+            single-use code that expires in 30 minutes (SEG-05).
+        "400": { $ref: "#/components/responses/ValidationFailed" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /auth/reset-password:
@@ -180,11 +183,19 @@ paths:
               type: object
               required: [code, newPassword]
               properties:
-                code: { type: string }
+                code: { type: string, description: "Single-use code from the link in the recovery email" }
                 newPassword: { type: string, minLength: 8, description: "At most 72 bytes in UTF-8 (bcrypt limit)" }
       responses:
-        "204": { description: Password reset }
-        "400": { description: "Invalid or expired code (generic message, no $ref)" }
+        "204": { description: Password reset; the code can no longer be used }
+        "400":
+          description: >
+            `AUTH_INVALID_OR_EXPIRED_CODE` (unknown, expired or already used
+            code, or a disabled account: one generic answer for all of them),
+            `AUTH_WEAK_PASSWORD` (with `field: newPassword`; the code is not
+            consumed) or `VALIDATION_ERROR` if a field is missing
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
   # ───────────────────────── ADMIN: ENVIRONMENTS (RF-01, RF-13, CU-01, CU-10) ─────────────────────────
