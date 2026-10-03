@@ -75,6 +75,7 @@ paths:
                   guestType: { type: string, enum: [CONTRACT, TEMPORARY], nullable: true, description: "only when role is GUEST" }
                   name: { type: string }
                   mustChangePassword: { type: boolean, description: "true on first login with a temporary password (RF-12)" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/InvalidCredentials" }
         "403": { $ref: "#/components/responses/AccountDisabled" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
