@@ -19,6 +19,8 @@ jobs:
 
   # Un cambio incompatible respecto al último tag falla, salvo que el PR lleve la etiqueta
   # `breaking-change` (cambio intencional: se publica un tag nuevo y los consumidores migran).
+  # La acción corre en un contenedor que solo ve el workspace: el spec base va en un archivo ahí
+  # (no en RUNNER_TEMP).
   breaking-changes:
     runs-on: ubuntu-latest
     if: ${{ !contains(github.event.pull_request.labels.*.name, 'breaking-change') }}
@@ -34,13 +36,13 @@ jobs:
             echo "Sin tags todavía: no hay contra qué comparar."
             echo "found=false" >> "$GITHUB_OUTPUT"
           else
-            git show "$tag:openapi/bff.yaml" > "$RUNNER_TEMP/base.yaml"
+            git show "$tag:openapi/bff.yaml" > base-bff.yaml
             echo "found=true" >> "$GITHUB_OUTPUT"
             echo "Comparando contra $tag"
           fi
       - if: steps.base.outputs.found == 'true'
         uses: oasdiff/oasdiff-action/breaking@b9325c9e0a27ab65b0da3b766522cedec6be81dc # v0.1.18
         with:
-          base: ${{ runner.temp }}/base.yaml
+          base: base-bff.yaml
           revision: openapi/bff.yaml
           fail-on: ERR
