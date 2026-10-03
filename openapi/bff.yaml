@@ -1,0 +1,1113 @@
+openapi: 3.0.3
+info:
+  title: Quipu — BFF API
+  description: >
+    Contract-first spec for the BFF (`/bff/**`) consumed by the Angular
+    frontend. Source of truth for the contract — designed BEFORE
+    implementation (see SRS chapter "10 - APIs e Integraciones", section
+    "Estrategia de contrato: BFF vs. Core API"). Any new endpoint or
+    response shape change is reflected here first; the Spring Boot
+    implementation is validated against this spec with contract tests
+    (MockMvc, SRS chapter "13 - Plan de Pruebas").
+    Plain JSON, no HATEOAS `_links` (that is exclusive to the internal Core
+    API). Language convention: identifiers (paths, fields, enums, error
+    codes) are English per project convention; the SRS chapters that
+    reference this spec stay in Spanish (formal documentation). User-facing
+    error `message` values stay in Spanish — the end users (Tarimat Wasi
+    family and guests) read Spanish, not English.
+  version: "1.0"
+  license:
+    name: Proprietary - all rights reserved (Tarimat Wasi)
+servers:
+  - url: /bff
+
+tags:
+  - name: auth
+    description: Login, session and password recovery (RF-08, RF-12, RF-16)
+  - name: admin-environments
+    description: Rentable environment inventory (RF-01, RF-13)
+  - name: admin-guests
+    description: Guest registration, detail and access credentials (RF-02, RF-13, RF-14, RF-17)
+  - name: admin-contracts
+    description: Contract upload, validity and termination (RF-03, RF-09)
+  - name: admin-payments
+    description: Payment review queue and direct payments (RF-05, RF-06)
+  - name: admin-fines
+    description: Fines charged to guests, counted as income (RF-19, RN-30)
+  - name: admin-expenses
+    description: Operating expenses (RF-07)
+  - name: admin-dashboard
+    description: Home summary and monthly income/expense balance (RF-18)
+  - name: guest
+    description: Self-service for a guest with an active contract (RF-04, RF-06, RF-10)
+  - name: temporary-guest
+    description: Self-service for a guest with a one-time stay (RF-04, RF-06)
+
+paths:
+  # ───────────────────────── AUTH (RF-08, RF-11, RF-12, RF-16, RF-17) ─────────────────────────
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Log in (RF-08, CU-15)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [documentType, documentNumber, password]
+              properties:
+                documentType: { $ref: "#/components/schemas/DocumentType" }
+                documentNumber: { type: string }
+                password: { type: string }
+      responses:
+        "200":
+          description: "Session started — HttpOnly JWT cookie issued (SameSite=Lax; Secure)"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [role, name, mustChangePassword]
+                properties:
+                  role: { type: string, enum: [ADMIN, GUEST] }
+                  guestType: { type: string, enum: [CONTRACT, TEMPORARY], nullable: true, description: "only when role is GUEST" }
+                  name: { type: string }
+                  mustChangePassword: { type: boolean, description: "true on first login with a temporary password (RF-12)" }
+        "401": { $ref: "#/components/responses/InvalidCredentials" }
+        "403": { $ref: "#/components/responses/AccountDisabled" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Log out
+      security: [{ cookieAuth: [] }]
+      responses:
+        "204": { description: "Session closed, cookie invalidated" }
+        "401": { $ref: "#/components/responses/NoSession" }
+
+  /auth/me:
+    get:
+      operationId: getCurrentUser
+      tags: [auth]
+      summary: Current session
+      security: [{ cookieAuth: [] }]
+      responses:
+        "200":
+          description: Active session data
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [role, name]
+                properties:
+                  role: { type: string, enum: [ADMIN, GUEST] }
+                  guestType: { type: string, enum: [CONTRACT, TEMPORARY], nullable: true, description: "only when role is GUEST" }
+                  name: { type: string }
+        "401": { $ref: "#/components/responses/NoSession" }
+
+  /auth/change-password:
+    post:
+      operationId: changePassword
+      tags: [auth]
+      summary: Change password — mandatory on first login (RF-12)
+      description: >
+        `currentPassword` is optional only while the session still has the
+        password change pending (first login with a temporary password) and
+        required otherwise. On success the response sets a fresh `sessionToken`
+        cookie without the pending mark. A new password equal to the current
+        (or temporary) one is rejected.
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [newPassword]
+              properties:
+                currentPassword: { type: string, description: "Optional when coming from the forced first-login flow" }
+                newPassword: { type: string, minLength: 8, description: "At most 72 bytes in UTF-8 (bcrypt limit)" }
+      responses:
+        "204": { description: Password updated; Set-Cookie replaces the session }
+        "400":
+          description: >
+            `AUTH_WEAK_PASSWORD` (shorter than 8 characters or longer than 72
+            bytes) or `AUTH_PASSWORD_UNCHANGED` (same as the current one), both
+            with `field: newPassword`; `VALIDATION_ERROR` if the field is missing
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/NoSession" }
+
+  /auth/forgot-password:
+    post:
+      operationId: requestPasswordReset
+      tags: [auth]
+      summary: Request password recovery (RF-16)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        "202":
+          description: >
+            Always 202, whether the email exists or not (generic response
+            by design — never reveals account existence, RF-16).
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /auth/reset-password:
+    post:
+      operationId: resetPassword
+      tags: [auth]
+      summary: Reset password with a single-use code (RF-16)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, newPassword]
+              properties:
+                code: { type: string }
+                newPassword: { type: string, minLength: 8, description: "At most 72 bytes in UTF-8 (bcrypt limit)" }
+      responses:
+        "204": { description: Password reset }
+        "400": { description: "Invalid or expired code (generic message, no $ref)" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  # ───────────────────────── ADMIN: ENVIRONMENTS (RF-01, RF-13, CU-01, CU-10) ─────────────────────────
+  /admin/environments:
+    get:
+      operationId: listEnvironments
+      tags: [admin-environments]
+      summary: List environments (RF-01)
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [ACTIVE, INACTIVE, ALL], default: ACTIVE }
+      responses:
+        "200":
+          description: Environment list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Environment" }
+        "401": { $ref: "#/components/responses/NoSession" }
+    post:
+      operationId: createEnvironment
+      tags: [admin-environments]
+      summary: Create environment (RF-01, CU-01)
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, type]
+              properties:
+                code: { type: string }
+                type: { type: string, enum: [ROOM, CABIN] }
+      responses:
+        "201":
+          description: Environment created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Environment" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "409": { description: "Duplicate environment code (RN-*)" }
+
+  /admin/environments/{id}:
+    get:
+      operationId: getEnvironment
+      tags: [admin-environments]
+      summary: Environment detail
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200":
+          description: Environment detail
+          content: { application/json: { schema: { $ref: "#/components/schemas/Environment" } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateEnvironment
+      tags: [admin-environments]
+      summary: Edit environment
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code: { type: string }
+                type: { type: string, enum: [ROOM, CABIN] }
+      responses:
+        "200":
+          description: Environment updated
+          content: { application/json: { schema: { $ref: "#/components/schemas/Environment" } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: "Duplicate environment code (RN-*)" }
+
+  /admin/environments/{id}/deactivate:
+    post:
+      operationId: deactivateEnvironment
+      tags: [admin-environments]
+      summary: Soft-deactivate environment (RF-13, RN-12, CU-10)
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "204": { description: "Environment deactivated, history preserved" }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /admin/environments/{id}/reactivate:
+    post:
+      operationId: reactivateEnvironment
+      tags: [admin-environments]
+      summary: Reactivate a previously deactivated environment (RN-12)
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "204": { description: "Environment reactivated, visible in active listings again" }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ───────────────────────── ADMIN: GUESTS (RF-02, RF-13, RF-14, RF-17, CU-02, CU-06, CU-10, CU-11, CU-13) ─────────────────────────
+  /admin/guests:
+    get:
+      operationId: listGuests
+      tags: [admin-guests]
+      summary: List guests (RF-02)
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters:
+        - name: type
+          in: query
+          schema: { type: string, enum: [CONTRACT, TEMPORARY] }
+        - name: status
+          in: query
+          schema: { type: string, enum: [ACTIVE, INACTIVE, ALL], default: ACTIVE }
+      responses:
+        "200":
+          description: Guest list
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/GuestSummary" } }
+        "401": { $ref: "#/components/responses/NoSession" }
+    post:
+      operationId: createGuest
+      tags: [admin-guests]
+      summary: Register guest (RF-02, RF-14, CU-02) — triggers credential email if an email is provided (RF-11)
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GuestInput" }
+      responses:
+        "201":
+          description: >
+            Guest created (or linked to an existing person by document id,
+            RN-18)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GuestSummary" }
+        "400":
+          description: "Consent not accepted (RN-14) or invalid document id"
+
+  /admin/guests/{id}:
+    get:
+      operationId: getGuestDetail
+      tags: [admin-guests]
+      summary: Guest 360 detail (CU-06) — personal data, contract, payment history
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200":
+          description: Consolidated guest view
+          content: { application/json: { schema: { $ref: "#/components/schemas/GuestDetail" } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateGuest
+      tags: [admin-guests]
+      summary: >
+        Edit guest — contact data and type-specific fields only; document
+        id and consent are immutable after creation (RN-18, RN-14)
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        content: { application/json: { schema: { $ref: "#/components/schemas/GuestUpdateInput" } } }
+      responses:
+        "200":
+          description: Guest updated
+          content: { application/json: { schema: { $ref: "#/components/schemas/GuestSummary" } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /admin/guests/{id}/deactivate:
+    post:
+      operationId: deactivateGuest
+      tags: [admin-guests]
+      summary: Soft-deactivate guest — loses login access (RF-13, RN-12, CU-10)
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "204": { description: Guest deactivated }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /admin/guests/{id}/reactivate:
+    post:
+      operationId: reactivateGuest
+      tags: [admin-guests]
+      summary: Reactivate a previously deactivated guest — restores login access (RN-12)
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "204": { description: "Guest reactivated, login access restored" }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /admin/guests/{id}/resend-credentials:
+    post:
+      operationId: resendGuestCredentials
+      tags: [admin-guests]
+      summary: Resend credentials — invalidates the previous temporary password (RF-17, CU-13)
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "202": { description: Resend email queued }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { description: "Guest has no registered email" }
+
+  /admin/guests/{id}/payments:
+    get:
+      operationId: listGuestPaymentsByAdmin
+      tags: [admin-guests]
+      summary: A guest's payment history, admin view (RF-10)
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200":
+          description: Payment history for the given guest
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Payment" } } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ───────────────────────── ADMIN: CONTRACTS (RF-03, RF-09, CU-03, CU-07, CU-12) ─────────────────────────
+  /admin/contracts:
+    get:
+      operationId: listContracts
+      tags: [admin-contracts]
+      summary: List contracts with validity status (RF-09, CU-07)
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [ACTIVE, EXPIRED, TERMINATED] }
+      responses:
+        "200":
+          description: Contract list
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Contract" } } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+    post:
+      operationId: createContract
+      tags: [admin-contracts]
+      summary: Upload contract (RF-03, CU-03)
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, environmentId, guestId, monthlyAmount, paymentDay, graceDays, startDate]
+              properties:
+                file: { type: string, format: binary, description: "PDF, ≤10MB (RF-15)" }
+                environmentId: { type: string, format: uuid }
+                guestId: { type: string, format: uuid }
+                monthlyAmount: { type: number }
+                paymentDay: { type: integer, minimum: 1, maximum: 31 }
+                graceDays: { type: integer, minimum: 0 }
+                startDate: { type: string, format: date }
+                endDate: { type: string, format: date, description: "optional; omitted means an open-ended contract (RN-07)" }
+      responses:
+        "201":
+          description: Contract created
+          content: { application/json: { schema: { $ref: "#/components/schemas/Contract" } } }
+        "400": { description: "Invalid file, end date before start date, etc." }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "409": { description: "Environment already has an active contract (RN-20)" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /admin/contracts/{id}:
+    get:
+      operationId: getContract
+      tags: [admin-contracts]
+      summary: Contract detail
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200":
+          description: Contract detail
+          content: { application/json: { schema: { $ref: "#/components/schemas/Contract" } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /admin/contracts/{id}/terminate:
+    post:
+      operationId: terminateContract
+      tags: [admin-contracts]
+      summary: Manually terminate contract (RN-25, CU-12) — blocked if there is outstanding debt
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "204": { description: Contract terminated }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "409": { description: "Unpaid periods pending (RN-25) — detail in the body" }
+
+  # ───────────────────────── ADMIN: PAYMENTS (RF-05, RF-06, CU-04, CU-05, CU-14) ─────────────────────────
+  /admin/dashboard:
+    get:
+      operationId: getAdminDashboard
+      tags: [admin-dashboard]
+      summary: Administrator home summary (HU-A04, CU-04)
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      responses:
+        "200":
+          description: Dashboard summary
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [paymentsUpToDate, paymentsPending, paymentsOverdue, pendingVouchers]
+                properties:
+                  paymentsUpToDate: { type: integer }
+                  paymentsPending: { type: integer }
+                  paymentsOverdue: { type: integer }
+                  pendingVouchers:
+                    type: array
+                    items: { $ref: "#/components/schemas/Payment" }
+        "401": { $ref: "#/components/responses/NoSession" }
+
+  /admin/finance:
+    get:
+      operationId: getFinanceSummary
+      tags: [admin-dashboard]
+      summary: Income vs. expenses balance for a month (RF-18, CU-08)
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters:
+        - name: month
+          in: query
+          required: true
+          schema: { type: string, pattern: "^\\d{4}-\\d{2}$", example: "2026-09" }
+      responses:
+        "200":
+          description: Monthly balance
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [totalIncome, totalExpenses, net]
+                properties:
+                  totalIncome: { type: number }
+                  totalExpenses: { type: number }
+                  net: { type: number }
+        "400": { description: "Invalid month parameter" }
+        "401": { $ref: "#/components/responses/NoSession" }
+
+  /admin/payments:
+    get:
+      operationId: listPayments
+      tags: [admin-payments]
+      summary: Payment review queue (RF-05, CU-05)
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [PENDING, APPROVED, REJECTED] }
+      responses:
+        "200":
+          description: Payment list
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Payment" } } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+    post:
+      operationId: createDirectPayment
+      tags: [admin-payments]
+      summary: >
+        Register a direct payment (cash/manual) — admin uploads the
+        voucher on the guest's behalf, auto-approved (RN-22, RN-23, CU-14).
+        A voucher is always required, no exceptions (RN-22).
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, guestId, period, amount]
+              properties:
+                file: { type: string, format: binary, description: "JPG/PNG/PDF, ≤5MB (RF-15)" }
+                guestId: { type: string, format: uuid }
+                period: { type: string, pattern: "^\\d{4}-\\d{2}$" }
+                amount: { type: number }
+      responses:
+        "201":
+          description: "Payment registered, status APPROVED immediately (RN-23)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Payment" } } }
+        "400": { description: "Invalid file (RF-15)" }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "409": { description: "An approved payment already exists for this period (RN-02)" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /admin/payments/{id}:
+    patch:
+      operationId: resolvePayment
+      tags: [admin-payments]
+      summary: Approve or reject a payment (RF-05, CU-05)
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [APPROVED, REJECTED] }
+                reason: { type: string, description: "Required when status=REJECTED (RN-05)" }
+      responses:
+        "200":
+          description: Payment resolved
+          content: { application/json: { schema: { $ref: "#/components/schemas/Payment" } } }
+        "400": { description: "Empty reason on rejection (RN-05)" }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "409": { description: "Payment already resolved" }
+
+  # ───────────────────────── ADMIN: EXPENSES (RF-07, CU-08) ─────────────────────────
+  /admin/expenses:
+    get:
+      operationId: listExpenses
+      tags: [admin-expenses]
+      summary: List monthly expenses (RF-07, CU-08)
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters:
+        - name: month
+          in: query
+          required: true
+          schema: { type: string, pattern: "^\\d{4}-\\d{2}$" }
+      responses:
+        "200":
+          description: Expense list
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Expense" } } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+    post:
+      operationId: createExpense
+      tags: [admin-expenses]
+      summary: Register expense (RF-07)
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExpenseInput" }
+      responses:
+        "201":
+          description: Expense created
+          content: { application/json: { schema: { $ref: "#/components/schemas/Expense" } } }
+        "400": { description: "Invalid amount" }
+        "401": { $ref: "#/components/responses/NoSession" }
+
+  /admin/expenses/{id}:
+    patch:
+      operationId: updateExpense
+      tags: [admin-expenses]
+      summary: Edit expense — no audit restriction (RN-24)
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        content: { application/json: { schema: { $ref: "#/components/schemas/ExpenseInput" } } }
+      responses:
+        "200":
+          description: Expense updated
+          content: { application/json: { schema: { $ref: "#/components/schemas/Expense" } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: deleteExpense
+      tags: [admin-expenses]
+      summary: Delete expense — no audit restriction (RN-24)
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "204": { description: Expense deleted }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ───────────────────────── ADMIN: FINES (RF-19, RN-30) ─────────────────────────
+  /admin/fines:
+    get:
+      operationId: listFines
+      tags: [admin-fines]
+      summary: List monthly fines (RF-19)
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters:
+        - name: month
+          in: query
+          required: true
+          schema: { type: string, pattern: "^\\d{4}-\\d{2}$" }
+      responses:
+        "200":
+          description: Fine list
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Fine" } } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+    post:
+      operationId: createFine
+      tags: [admin-fines]
+      summary: Register fine as income against a guest (RF-19, RN-30)
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FineInput" }
+      responses:
+        "201":
+          description: Fine created
+          content: { application/json: { schema: { $ref: "#/components/schemas/Fine" } } }
+        "400": { description: "Invalid amount or month" }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "404": { description: "Guest not found" }
+
+  /admin/fines/{id}:
+    delete:
+      operationId: deleteFine
+      tags: [admin-fines]
+      summary: Delete fine — no audit restriction (RN-24)
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "204": { description: Fine deleted }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ───────────────────────── CONTRACT GUEST (RF-04, RF-06, RF-10, CU-16..20) ─────────────────────────
+  /guest/account-status:
+    get:
+      operationId: getGuestAccountStatus
+      tags: [guest]
+      summary: Payment status by period — up to date/pending/overdue (RF-06, CU-16)
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType CONTRACT
+      responses:
+        "200":
+          description: Status per period
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/PeriodStatus" } } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+
+  /guest/contract:
+    get:
+      operationId: getOwnContract
+      tags: [guest]
+      summary: >
+        Own contract, regardless of status — shown read-only even when
+        EXPIRED or TERMINATED (CU-18, RN-26). A guest never loses visibility
+        of their own contract; only the ability to act on it changes with
+        status (e.g. voucher upload requires ACTIVE, see /guest/payments).
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType CONTRACT
+      responses:
+        "200":
+          description: Own contract, whatever its status
+          content: { application/json: { schema: { $ref: "#/components/schemas/Contract" } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "404": { description: "No contract was ever associated with this guest" }
+
+  /guest/payments:
+    get:
+      operationId: listOwnPayments
+      tags: [guest]
+      summary: Own payment history (RF-10, CU-19) — own record only (RN-09)
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType CONTRACT
+      responses:
+        "200":
+          description: Own payment history
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Payment" } } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+    post:
+      operationId: uploadPaymentVoucher
+      tags: [guest]
+      summary: Upload monthly payment voucher (RF-04, CU-17)
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType CONTRACT
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, period]
+              properties:
+                file: { type: string, format: binary, description: "JPG/PNG/PDF, ≤5MB (RF-15)" }
+                period: { type: string, pattern: "^\\d{4}-\\d{2}$" }
+                paymentMethod: { type: string, description: "Optional free text, e.g. Yape/transfer/cash (RN-28)" }
+      responses:
+        "201":
+          description: Voucher uploaded, payment set to PENDING
+          content: { application/json: { schema: { $ref: "#/components/schemas/Payment" } } }
+        "400": { description: "Invalid file (RF-15)" }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { description: "No active contract (RN-27)" }
+        "409": { description: "A pending voucher already exists for this period (RN-15)" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /guest/profile:
+    patch:
+      operationId: updateOwnProfile
+      tags: [guest]
+      summary: Edit own contact data (CU-20)
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType CONTRACT
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                phone: { type: string }
+                contactEmail: { type: string, format: email }
+      responses:
+        "200":
+          description: Profile updated
+          content: { application/json: { schema: { $ref: "#/components/schemas/GuestSummary" } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/NoSession" }
+
+  # ───────────────────────── TEMPORARY GUEST (RF-04, RF-06, CU-21, CU-22) ─────────────────────────
+  /temporary-guest/payment-status:
+    get:
+      operationId: getTemporaryGuestPaymentStatus
+      tags: [temporary-guest]
+      summary: Payment status for the stay period (CU-21)
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType TEMPORARY
+      responses:
+        "200":
+          description: Stay payment status
+          content: { application/json: { schema: { $ref: "#/components/schemas/PeriodStatus" } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+
+  /temporary-guest/payments:
+    post:
+      operationId: uploadTemporaryVoucher
+      tags: [temporary-guest]
+      summary: >
+        Upload one-time payment voucher (RF-04, CU-22) — a temporary guest
+        record allows exactly one voucher ever, pending or approved
+        (RN-03: single non-recurring payment). A second stay is a new
+        guest record (RN-13), never a second voucher on this one.
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType TEMPORARY
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary, description: "JPG/PNG/PDF, ≤5MB (RF-15)" }
+      responses:
+        "201":
+          description: Voucher uploaded, payment set to PENDING
+          content: { application/json: { schema: { $ref: "#/components/schemas/Payment" } } }
+        "400": { description: "Invalid file (RF-15)" }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "409": { description: "A voucher already exists for this stay, pending or approved (RN-03, RN-15)" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /temporary-guest/profile:
+    patch:
+      operationId: updateOwnProfileTemporary
+      tags: [temporary-guest]
+      summary: Edit own contact data (CU-23)
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType TEMPORARY
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                phone: { type: string }
+                contactEmail: { type: string, format: email }
+      responses:
+        "200":
+          description: Profile updated
+          content: { application/json: { schema: { $ref: "#/components/schemas/GuestSummary" } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/NoSession" }
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: sessionToken
+      description: JWT in an HttpOnly cookie, SameSite=Lax; Secure — same site, because Vercel rewrites /bff/* to the backend (RF-08). OpenAPI 3.0 only allows empty scope lists for this scheme, so the role that may call each operation is declared with the `x-roles` extension (ADMIN or GUEST); an operation without it accepts any authenticated session.
+
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    ValidationFailed:
+      description: Invalid input data
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Resource does not exist
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NoSession:
+      description: No active session
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    InvalidCredentials:
+      description: Incorrect document or password
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    PasswordChangeRequired:
+      description: >
+        The session must change its password first (RF-12). Any endpoint except
+        login and change-password answers `AUTH_PASSWORD_CHANGE_REQUIRED` until it does.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    AccountDisabled:
+      description: Account disabled (RN-12)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    TooManyRequests:
+      description: "Rate limit exceeded (SEC-01) — retry after the window in the `Retry-After` header"
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      description: >
+        BFF error shape — plain JSON, distinct from RFC 7807 (that is
+        exclusive to the internal Core API, see SRS chapter "10 - APIs e
+        Integraciones"). `code` is a stable English constant read by the
+        frontend; `message` is the Spanish text shown to the end user.
+      required: [code, message]
+      properties:
+        code: { type: string, description: "Stable error code, e.g. VOUCHER_ALREADY_EXISTS" }
+        message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+        field: { type: string, description: "Field name if this is a validation error" }
+
+    DocumentType:
+      type: string
+      enum: [DNI, CE, PASSPORT]
+      description: "DNI (national ID, 8 digits), CE (Carné de Extranjería), PASSPORT (foreign visitors without CE)"
+
+    Environment:
+      type: object
+      required: [id, code, type, status]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        type: { type: string, enum: [ROOM, CABIN] }
+        status: { type: string, enum: [ACTIVE, INACTIVE] }
+
+    GuestInput:
+      type: object
+      required: [documentType, documentNumber, name, type, dataConsent]
+      properties:
+        documentType: { $ref: "#/components/schemas/DocumentType" }
+        documentNumber: { type: string }
+        name: { type: string }
+        phone: { type: string }
+        contactEmail: { type: string, format: email }
+        type: { type: string, enum: [CONTRACT, TEMPORARY] }
+        dataConsent: { type: boolean, description: "Must be true (RN-14)" }
+        stayStartDate: { type: string, format: date, description: "Only when type=TEMPORARY" }
+        stayEndDate: { type: string, format: date, description: "Only when type=TEMPORARY" }
+        agreedAmount: { type: number, description: "Only when type=TEMPORARY" }
+        emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
+
+    EmergencyContact:
+      type: object
+      description: Optional, never blocks guest registration (RN-29)
+      properties:
+        name: { type: string }
+        relationship: { type: string }
+        phone: { type: string }
+
+    GuestUpdateInput:
+      type: object
+      description: >
+        Editable subset of GuestInput. documentType/documentNumber (RN-18
+        identity key) and dataConsent (RN-14, captured once at creation)
+        are immutable after creation — not included here.
+      properties:
+        name: { type: string }
+        phone: { type: string }
+        contactEmail: { type: string, format: email }
+        stayStartDate: { type: string, format: date, description: "Only when guest type=TEMPORARY" }
+        stayEndDate: { type: string, format: date, description: "Only when guest type=TEMPORARY" }
+        agreedAmount: { type: number, description: "Only when guest type=TEMPORARY" }
+        emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
+
+    GuestSummary:
+      type: object
+      required: [id, documentType, documentNumber, name, type, status, hasLoginAccess]
+      properties:
+        id: { type: string, format: uuid }
+        documentType: { $ref: "#/components/schemas/DocumentType" }
+        documentNumber: { type: string }
+        name: { type: string }
+        type: { type: string, enum: [CONTRACT, TEMPORARY] }
+        status: { type: string, enum: [ACTIVE, INACTIVE] }
+        hasLoginAccess: { type: boolean }
+
+    GuestDetail:
+      allOf:
+        - $ref: "#/components/schemas/GuestSummary"
+        - type: object
+          required: [paymentHistory]
+          properties:
+            contract: { $ref: "#/components/schemas/Contract" }
+            paymentHistory:
+              type: array
+              items: { $ref: "#/components/schemas/Payment" }
+
+    Contract:
+      type: object
+      required: [id, environmentId, guestId, monthlyAmount, paymentDay, graceDays, startDate, status, fileUrl]
+      properties:
+        id: { type: string, format: uuid }
+        environmentId: { type: string, format: uuid }
+        guestId: { type: string, format: uuid }
+        monthlyAmount: { type: number }
+        paymentDay: { type: integer }
+        graceDays: { type: integer }
+        startDate: { type: string, format: date }
+        endDate: { type: string, format: date, nullable: true, description: "null means an open-ended contract (RN-07)" }
+        status: { type: string, enum: [ACTIVE, EXPIRED, TERMINATED] }
+        fileUrl: { type: string, description: "R2 signed URL, expires in 15 min" }
+
+    Payment:
+      type: object
+      required: [id, guestId, period, amount, status, voucherUrl, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        guestId: { type: string, format: uuid }
+        period: { type: string, example: "2026-09" }
+        amount: { type: number }
+        paymentMethod: { type: string, nullable: true, description: "Free text per payment (RN-28)" }
+        status: { type: string, enum: [PENDING, APPROVED, REJECTED] }
+        rejectionReason: { type: string, nullable: true }
+        voucherUrl: { type: string, description: "R2 signed URL — every payment has a voucher, no exceptions (RN-22, includes admin-direct payments per RN-23)" }
+        createdAt: { type: string, format: date-time }
+
+    PeriodStatus:
+      type: object
+      required: [period, status]
+      properties:
+        period: { type: string, example: "2026-09" }
+        status: { type: string, enum: [PAID, UNDER_REVIEW, UNPAID, OVERDUE] }
+
+    ExpenseInput:
+      type: object
+      required: [category, amount, month]
+      properties:
+        category: { type: string, enum: [WATER, ELECTRICITY, INTERNET, OTHER] }
+        amount: { type: number }
+        month: { type: string, pattern: "^\\d{4}-\\d{2}$" }
+        description: { type: string }
+
+    FineInput:
+      type: object
+      required: [guestId, amount, month]
+      properties:
+        guestId: { type: string, format: uuid }
+        amount: { type: number }
+        month: { type: string, pattern: "^\\d{4}-\\d{2}$" }
+        description: { type: string }
+
+    Fine:
+      allOf:
+        - $ref: "#/components/schemas/FineInput"
+        - type: object
+          required: [id]
+          properties:
+            id: { type: string, format: uuid }
+
+    Expense:
+      allOf:
+        - $ref: "#/components/schemas/ExpenseInput"
+        - type: object
+          required: [id]
+          properties:
+            id: { type: string, format: uuid }
