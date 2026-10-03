@@ -69,6 +69,7 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [role, name, mustChangePassword]
                 properties:
                   role: { type: string, enum: [ADMIN, GUEST] }
                   guestType: { type: string, enum: [CONTRACT, TEMPORARY], nullable: true, description: "only when role is GUEST" }
@@ -101,6 +102,7 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [role, name]
                 properties:
                   role: { type: string, enum: [ADMIN, GUEST] }
                   guestType: { type: string, enum: [CONTRACT, TEMPORARY], nullable: true, description: "only when role is GUEST" }
@@ -178,7 +180,7 @@ paths:
               required: [code, newPassword]
               properties:
                 code: { type: string }
-                newPassword: { type: string, minLength: 8 }
+                newPassword: { type: string, minLength: 8, description: "At most 72 bytes in UTF-8 (bcrypt limit)" }
       responses:
         "204": { description: Password reset }
         "400": { description: "Invalid or expired code (generic message, no $ref)" }
@@ -190,7 +192,8 @@ paths:
       operationId: listEnvironments
       tags: [admin-environments]
       summary: List environments (RF-01)
-      security: [{ cookieAuth: [ADMIN] }]
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
       parameters:
         - name: status
           in: query
@@ -208,7 +211,8 @@ paths:
       operationId: createEnvironment
       tags: [admin-environments]
       summary: Create environment (RF-01, CU-01)
-      security: [{ cookieAuth: [ADMIN] }]
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
       requestBody:
         required: true
         content:
@@ -233,7 +237,8 @@ paths:
       operationId: getEnvironment
       tags: [admin-environments]
       summary: Environment detail
-      security: [{ cookieAuth: [ADMIN] }]
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
       parameters: [{ $ref: "#/components/parameters/Id" }]
       responses:
         "200":
@@ -245,7 +250,8 @@ paths:
       operationId: updateEnvironment
       tags: [admin-environments]
       summary: Edit environment
-      security: [{ cookieAuth: [ADMIN] }]
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
       parameters: [{ $ref: "#/components/parameters/Id" }]
       requestBody:
         content:
@@ -268,7 +274,8 @@ paths:
       operationId: deactivateEnvironment
       tags: [admin-environments]
       summary: Soft-deactivate environment (RF-13, RN-12, CU-10)
-      security: [{ cookieAuth: [ADMIN] }]
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
       parameters: [{ $ref: "#/components/parameters/Id" }]
       responses:
         "204": { description: "Environment deactivated, history preserved" }
@@ -280,7 +287,8 @@ paths:
       operationId: reactivateEnvironment
       tags: [admin-environments]
       summary: Reactivate a previously deactivated environment (RN-12)
-      security: [{ cookieAuth: [ADMIN] }]
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
       parameters: [{ $ref: "#/components/parameters/Id" }]
       responses:
         "204": { description: "Environment reactivated, visible in active listings again" }
@@ -293,7 +301,8 @@ paths:
       operationId: listGuests
       tags: [admin-guests]
       summary: List guests (RF-02)
-      security: [{ cookieAuth: [ADMIN] }]
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
       parameters:
         - name: type
           in: query
@@ -312,7 +321,8 @@ paths:
       operationId: createGuest
       tags: [admin-guests]
       summary: Register guest (RF-02, RF-14, CU-02) — triggers credential email if an email is provided (RF-11)
-      security: [{ cookieAuth: [ADMIN] }]
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
       requestBody:
         required: true
         content:
@@ -334,7 +344,8 @@ paths:
       operationId: getGuestDetail
       tags: [admin-guests]
       summary: Guest 360 detail (CU-06) — personal data, contract, payment history
-      security: [{ cookieAuth: [ADMIN] }]
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
       parameters: [{ $ref: "#/components/parameters/Id" }]
       responses:
         "200":
@@ -348,7 +359,8 @@ paths:
       summary: >
         Edit guest — contact data and type-specific fields only; document
         id and consent are immutable after creation (RN-18, RN-14)
-      security: [{ cookieAuth: [ADMIN] }]
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
       parameters: [{ $ref: "#/components/parameters/Id" }]
       requestBody:
         content: { application/json: { schema: { $ref: "#/components/schemas/GuestUpdateInput" } } }
@@ -364,7 +376,8 @@ paths:
       operationId: deactivateGuest
       tags: [admin-guests]
       summary: Soft-deactivate guest — loses login access (RF-13, RN-12, CU-10)
-      security: [{ cookieAuth: [ADMIN] }]
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
       parameters: [{ $ref: "#/components/parameters/Id" }]
       responses:
         "204": { description: Guest deactivated }
@@ -376,7 +389,8 @@ paths:
       operationId: reactivateGuest
       tags: [admin-guests]
       summary: Reactivate a previously deactivated guest — restores login access (RN-12)
-      security: [{ cookieAuth: [ADMIN] }]
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
       parameters: [{ $ref: "#/components/parameters/Id" }]
       responses:
         "204": { description: "Guest reactivated, login access restored" }
@@ -388,7 +402,8 @@ paths:
       operationId: resendGuestCredentials
       tags: [admin-guests]
       summary: Resend credentials — invalidates the previous temporary password (RF-17, CU-13)
-      security: [{ cookieAuth: [ADMIN] }]
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
       parameters: [{ $ref: "#/components/parameters/Id" }]
       responses:
         "202": { description: Resend email queued }
@@ -401,7 +416,8 @@ paths:
       operationId: listGuestPaymentsByAdmin
       tags: [admin-guests]
       summary: A guest's payment history, admin view (RF-10)
-      security: [{ cookieAuth: [ADMIN] }]
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
       parameters: [{ $ref: "#/components/parameters/Id" }]
       responses:
         "200":
@@ -416,7 +432,8 @@ paths:
       operationId: listContracts
       tags: [admin-contracts]
       summary: List contracts with validity status (RF-09, CU-07)
-      security: [{ cookieAuth: [ADMIN] }]
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
       parameters:
         - name: status
           in: query
@@ -430,7 +447,8 @@ paths:
       operationId: createContract
       tags: [admin-contracts]
       summary: Upload contract (RF-03, CU-03)
-      security: [{ cookieAuth: [ADMIN] }]
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
       requestBody:
         required: true
         content:
@@ -461,7 +479,8 @@ paths:
       operationId: getContract
       tags: [admin-contracts]
       summary: Contract detail
-      security: [{ cookieAuth: [ADMIN] }]
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
       parameters: [{ $ref: "#/components/parameters/Id" }]
       responses:
         "200":
@@ -475,7 +494,8 @@ paths:
       operationId: terminateContract
       tags: [admin-contracts]
       summary: Manually terminate contract (RN-25, CU-12) — blocked if there is outstanding debt
-      security: [{ cookieAuth: [ADMIN] }]
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
       parameters: [{ $ref: "#/components/parameters/Id" }]
       responses:
         "204": { description: Contract terminated }
@@ -488,7 +508,8 @@ paths:
       operationId: getAdminDashboard
       tags: [admin-dashboard]
       summary: Administrator home summary (HU-A04, CU-04)
-      security: [{ cookieAuth: [ADMIN] }]
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
       responses:
         "200":
           description: Dashboard summary
@@ -496,6 +517,7 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [paymentsUpToDate, paymentsPending, paymentsOverdue, pendingVouchers]
                 properties:
                   paymentsUpToDate: { type: integer }
                   paymentsPending: { type: integer }
@@ -510,7 +532,8 @@ paths:
       operationId: getFinanceSummary
       tags: [admin-dashboard]
       summary: Income vs. expenses balance for a month (RF-18, CU-08)
-      security: [{ cookieAuth: [ADMIN] }]
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
       parameters:
         - name: month
           in: query
@@ -523,6 +546,7 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [totalIncome, totalExpenses, net]
                 properties:
                   totalIncome: { type: number }
                   totalExpenses: { type: number }
@@ -535,7 +559,8 @@ paths:
       operationId: listPayments
       tags: [admin-payments]
       summary: Payment review queue (RF-05, CU-05)
-      security: [{ cookieAuth: [ADMIN] }]
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
       parameters:
         - name: status
           in: query
@@ -552,7 +577,8 @@ paths:
         Register a direct payment (cash/manual) — admin uploads the
         voucher on the guest's behalf, auto-approved (RN-22, RN-23, CU-14).
         A voucher is always required, no exceptions (RN-22).
-      security: [{ cookieAuth: [ADMIN] }]
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
       requestBody:
         required: true
         content:
@@ -579,7 +605,8 @@ paths:
       operationId: resolvePayment
       tags: [admin-payments]
       summary: Approve or reject a payment (RF-05, CU-05)
-      security: [{ cookieAuth: [ADMIN] }]
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
       parameters: [{ $ref: "#/components/parameters/Id" }]
       requestBody:
         required: true
@@ -605,7 +632,8 @@ paths:
       operationId: listExpenses
       tags: [admin-expenses]
       summary: List monthly expenses (RF-07, CU-08)
-      security: [{ cookieAuth: [ADMIN] }]
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
       parameters:
         - name: month
           in: query
@@ -620,7 +648,8 @@ paths:
       operationId: createExpense
       tags: [admin-expenses]
       summary: Register expense (RF-07)
-      security: [{ cookieAuth: [ADMIN] }]
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
       requestBody:
         required: true
         content:
@@ -638,7 +667,8 @@ paths:
       operationId: updateExpense
       tags: [admin-expenses]
       summary: Edit expense — no audit restriction (RN-24)
-      security: [{ cookieAuth: [ADMIN] }]
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
       parameters: [{ $ref: "#/components/parameters/Id" }]
       requestBody:
         content: { application/json: { schema: { $ref: "#/components/schemas/ExpenseInput" } } }
@@ -652,7 +682,8 @@ paths:
       operationId: deleteExpense
       tags: [admin-expenses]
       summary: Delete expense — no audit restriction (RN-24)
-      security: [{ cookieAuth: [ADMIN] }]
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
       parameters: [{ $ref: "#/components/parameters/Id" }]
       responses:
         "204": { description: Expense deleted }
@@ -665,7 +696,8 @@ paths:
       operationId: listFines
       tags: [admin-fines]
       summary: List monthly fines (RF-19)
-      security: [{ cookieAuth: [ADMIN] }]
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
       parameters:
         - name: month
           in: query
@@ -680,7 +712,8 @@ paths:
       operationId: createFine
       tags: [admin-fines]
       summary: Register fine as income against a guest (RF-19, RN-30)
-      security: [{ cookieAuth: [ADMIN] }]
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
       requestBody:
         required: true
         content:
@@ -699,7 +732,8 @@ paths:
       operationId: deleteFine
       tags: [admin-fines]
       summary: Delete fine — no audit restriction (RN-24)
-      security: [{ cookieAuth: [ADMIN] }]
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
       parameters: [{ $ref: "#/components/parameters/Id" }]
       responses:
         "204": { description: Fine deleted }
@@ -712,7 +746,8 @@ paths:
       operationId: getGuestAccountStatus
       tags: [guest]
       summary: Payment status by period — up to date/pending/overdue (RF-06, CU-16)
-      security: [{ cookieAuth: [GUEST] }] # guestType CONTRACT
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType CONTRACT
       responses:
         "200":
           description: Status per period
@@ -728,7 +763,8 @@ paths:
         EXPIRED or TERMINATED (CU-18, RN-26). A guest never loses visibility
         of their own contract; only the ability to act on it changes with
         status (e.g. voucher upload requires ACTIVE, see /guest/payments).
-      security: [{ cookieAuth: [GUEST] }] # guestType CONTRACT
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType CONTRACT
       responses:
         "200":
           description: Own contract, whatever its status
@@ -741,7 +777,8 @@ paths:
       operationId: listOwnPayments
       tags: [guest]
       summary: Own payment history (RF-10, CU-19) — own record only (RN-09)
-      security: [{ cookieAuth: [GUEST] }] # guestType CONTRACT
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType CONTRACT
       responses:
         "200":
           description: Own payment history
@@ -751,7 +788,8 @@ paths:
       operationId: uploadPaymentVoucher
       tags: [guest]
       summary: Upload monthly payment voucher (RF-04, CU-17)
-      security: [{ cookieAuth: [GUEST] }] # guestType CONTRACT
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType CONTRACT
       requestBody:
         required: true
         content:
@@ -778,7 +816,8 @@ paths:
       operationId: updateOwnProfile
       tags: [guest]
       summary: Edit own contact data (CU-20)
-      security: [{ cookieAuth: [GUEST] }] # guestType CONTRACT
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType CONTRACT
       requestBody:
         content:
           application/json:
@@ -800,7 +839,8 @@ paths:
       operationId: getTemporaryGuestPaymentStatus
       tags: [temporary-guest]
       summary: Payment status for the stay period (CU-21)
-      security: [{ cookieAuth: [GUEST] }] # guestType TEMPORARY
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType TEMPORARY
       responses:
         "200":
           description: Stay payment status
@@ -816,7 +856,8 @@ paths:
         record allows exactly one voucher ever, pending or approved
         (RN-03: single non-recurring payment). A second stay is a new
         guest record (RN-13), never a second voucher on this one.
-      security: [{ cookieAuth: [GUEST] }] # guestType TEMPORARY
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType TEMPORARY
       requestBody:
         required: true
         content:
@@ -840,7 +881,8 @@ paths:
       operationId: updateOwnProfileTemporary
       tags: [temporary-guest]
       summary: Edit own contact data (CU-23)
-      security: [{ cookieAuth: [GUEST] }] # guestType TEMPORARY
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType TEMPORARY
       requestBody:
         content:
           application/json:
@@ -862,7 +904,7 @@ components:
       type: apiKey
       in: cookie
       name: sessionToken
-      description: JWT in an HttpOnly cookie, SameSite=Lax; Secure — same site, because Vercel rewrites /bff/* to the backend (RF-08)
+      description: JWT in an HttpOnly cookie, SameSite=Lax; Secure — same site, because Vercel rewrites /bff/* to the backend (RF-08). OpenAPI 3.0 only allows empty scope lists for this scheme, so the role that may call each operation is declared with the `x-roles` extension (ADMIN or GUEST); an operation without it accepts any authenticated session.
 
   parameters:
     Id:
@@ -918,6 +960,7 @@ components:
         exclusive to the internal Core API, see SRS chapter "10 - APIs e
         Integraciones"). `code` is a stable English constant read by the
         frontend; `message` is the Spanish text shown to the end user.
+      required: [code, message]
       properties:
         code: { type: string, description: "Stable error code, e.g. VOUCHER_ALREADY_EXISTS" }
         message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
@@ -930,6 +973,7 @@ components:
 
     Environment:
       type: object
+      required: [id, code, type, status]
       properties:
         id: { type: string, format: uuid }
         code: { type: string }
@@ -977,6 +1021,7 @@ components:
 
     GuestSummary:
       type: object
+      required: [id, documentType, documentNumber, name, type, status, hasLoginAccess]
       properties:
         id: { type: string, format: uuid }
         documentType: { $ref: "#/components/schemas/DocumentType" }
@@ -990,6 +1035,7 @@ components:
       allOf:
         - $ref: "#/components/schemas/GuestSummary"
         - type: object
+          required: [paymentHistory]
           properties:
             contract: { $ref: "#/components/schemas/Contract" }
             paymentHistory:
@@ -998,6 +1044,7 @@ components:
 
     Contract:
       type: object
+      required: [id, environmentId, guestId, monthlyAmount, paymentDay, graceDays, startDate, status, fileUrl]
       properties:
         id: { type: string, format: uuid }
         environmentId: { type: string, format: uuid }
@@ -1012,6 +1059,7 @@ components:
 
     Payment:
       type: object
+      required: [id, guestId, period, amount, status, voucherUrl, createdAt]
       properties:
         id: { type: string, format: uuid }
         guestId: { type: string, format: uuid }
@@ -1025,6 +1073,7 @@ components:
 
     PeriodStatus:
       type: object
+      required: [period, status]
       properties:
         period: { type: string, example: "2026-09" }
         status: { type: string, enum: [PAID, UNDER_REVIEW, UNPAID, OVERDUE] }
@@ -1051,6 +1100,7 @@ components:
       allOf:
         - $ref: "#/components/schemas/FineInput"
         - type: object
+          required: [id]
           properties:
             id: { type: string, format: uuid }
 
@@ -1058,5 +1108,6 @@ components:
       allOf:
         - $ref: "#/components/schemas/ExpenseInput"
         - type: object
+          required: [id]
           properties:
             id: { type: string, format: uuid }
