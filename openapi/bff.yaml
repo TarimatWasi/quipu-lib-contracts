@@ -79,16 +79,6 @@ paths:
         "403": { $ref: "#/components/responses/AccountDisabled" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
-  /auth/logout:
-    post:
-      operationId: logout
-      tags: [auth]
-      summary: Log out
-      security: [{ cookieAuth: [] }]
-      responses:
-        "204": { description: "Session closed, cookie invalidated" }
-        "401": { $ref: "#/components/responses/NoSession" }
-
   /auth/me:
     get:
       operationId: getCurrentUser
