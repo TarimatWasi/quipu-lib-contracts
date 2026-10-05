@@ -968,11 +968,11 @@ components:
       content:
         application/json:
           schema:
-            allOf:
-              - $ref: "#/components/schemas/Error"
-              - type: object
-                properties:
-                  code: { type: string, enum: [AUTH_ACCOUNT_LOCKED] }
+            type: object
+            required: [code, message]
+            properties:
+              code: { type: string, enum: [AUTH_ACCOUNT_LOCKED] }
+              message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
     TooManyRequests:
       description: "Rate limit exceeded (SEC-01) — retry after the window in the `Retry-After` header"
       content:
