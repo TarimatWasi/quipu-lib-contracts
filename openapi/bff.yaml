@@ -963,10 +963,16 @@ components:
     AccountLocked:
       description: >
         Account temporarily locked after 5 consecutive failed logins (SEG-06): the lock lasts
-        15 minutes, expires by itself and is lifted by a password reset (RF-16)
+        15 minutes, expires by itself and is lifted by a password reset (RF-16). The `code` is
+        always `AUTH_ACCOUNT_LOCKED`
       content:
         application/json:
-          schema: { $ref: "#/components/schemas/Error" }
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Error"
+              - type: object
+                properties:
+                  code: { type: string, enum: [AUTH_ACCOUNT_LOCKED] }
     TooManyRequests:
       description: "Rate limit exceeded (SEC-01) — retry after the window in the `Retry-After` header"
       content:
