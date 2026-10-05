@@ -78,6 +78,7 @@ paths:
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/InvalidCredentials" }
         "403": { $ref: "#/components/responses/AccountDisabled" }
+        "423": { $ref: "#/components/responses/AccountLocked" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /auth/logout:
@@ -959,6 +960,19 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
+    AccountLocked:
+      description: >
+        Account temporarily locked after 5 consecutive failed logins (SEG-06): the lock lasts
+        15 minutes, expires by itself and is lifted by a password reset (RF-16). The `code` is
+        always `AUTH_ACCOUNT_LOCKED`
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Error"
+              - type: object
+                properties:
+                  code: { type: string, enum: [AUTH_ACCOUNT_LOCKED] }
     TooManyRequests:
       description: "Rate limit exceeded (SEC-01) — retry after the window in the `Retry-After` header"
       content:
