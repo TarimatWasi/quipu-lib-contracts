@@ -78,6 +78,7 @@ paths:
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/InvalidCredentials" }
         "403": { $ref: "#/components/responses/AccountDisabled" }
+        "423": { $ref: "#/components/responses/AccountLocked" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /auth/logout:
@@ -956,6 +957,13 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
     AccountDisabled:
       description: Account disabled (RN-12)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    AccountLocked:
+      description: >
+        Account temporarily locked after 5 consecutive failed logins (SEG-06): the lock lasts
+        15 minutes, expires by itself and is lifted by a password reset (RF-16)
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
