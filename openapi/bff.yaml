@@ -103,11 +103,12 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [role, name]
+                required: [role, name, mustChangePassword]
                 properties:
                   role: { type: string, enum: [ADMIN, GUEST] }
                   guestType: { type: string, enum: [CONTRACT, TEMPORARY], nullable: true, description: "only when role is GUEST" }
                   name: { type: string }
+                  mustChangePassword: { type: boolean, description: "current state of the account, read from the database (RF-12): lets the client restore the session after a reload" }
         "401": { $ref: "#/components/responses/NoSession" }
 
   /auth/change-password:
