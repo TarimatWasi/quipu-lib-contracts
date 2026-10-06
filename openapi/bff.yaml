@@ -1171,9 +1171,12 @@ components:
             id: { type: string, format: uuid }
 
     Expense:
-      allOf:
-        - $ref: "#/components/schemas/ExpenseInput"
-        - type: object
-          required: [id]
-          properties:
-            id: { type: string, format: uuid }
+      type: object
+      description: An expense as the BFF answers it; the fields of `ExpenseInput` plus its `id`. The description is left out when there is none.
+      required: [id, category, amount, month]
+      properties:
+        id: { type: string, format: uuid }
+        category: { type: string, enum: [WATER, ELECTRICITY, INTERNET, OTHER] }
+        amount: { type: number, description: "In soles" }
+        month: { type: string, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09" }
+        description: { type: string }
