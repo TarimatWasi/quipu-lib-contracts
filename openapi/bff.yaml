@@ -1010,7 +1010,7 @@ paths:
     get:
       operationId: getOnboarding
       tags: [guest-onboarding]
-      summary: Onboarding state — steps, saved data and the consent text in force (RF-20, CU-26)
+      summary: Onboarding state — next step, saved data and the consent text in force (RF-20, CU-26)
       description: >
         Lets the guest resume where they left off. `nextStep` is the first
         pending step in the order PASSWORD, PERSONAL_DATA, DOCUMENTS, CONSENT
@@ -1649,28 +1649,6 @@ components:
             url: { type: string, description: "R2 signed URL, expires 5 minutes after the response (RN-37)" }
             urlExpiresAt: { type: string, format: date-time }
 
-    OnboardingStepState:
-      description: "State of one onboarding step: only DOCUMENTS is optional (RN-37)"
-      oneOf:
-        - $ref: "#/components/schemas/RequiredOnboardingStep"
-        - $ref: "#/components/schemas/OptionalOnboardingStep"
-
-    RequiredOnboardingStep:
-      type: object
-      required: [step, required, completed]
-      properties:
-        step: { type: string, enum: [PASSWORD, PERSONAL_DATA, CONSENT] }
-        required: { type: boolean, enum: [true] }
-        completed: { type: boolean }
-
-    OptionalOnboardingStep:
-      type: object
-      required: [step, required, completed]
-      properties:
-        step: { type: string, enum: [DOCUMENTS] }
-        required: { type: boolean, enum: [false] }
-        completed: { type: boolean }
-
     OnboardingState:
       description: >
         Onboarding state. While the guest is in onboarding `nextStep` names the
@@ -1690,13 +1668,10 @@ components:
 
     OnboardingPersonalDataPending:
       type: object
-      required: [status, nextStep, steps, documents, consent]
+      required: [status, nextStep, documents, consent]
       properties:
         status: { type: string, enum: [ONBOARDING] }
         nextStep: { type: string, enum: [PASSWORD, PERSONAL_DATA], description: "First pending step, in the order of RN-33" }
-        steps:
-          type: array
-          items: { $ref: "#/components/schemas/OnboardingStepState" }
         documents:
           type: array
           items: { $ref: "#/components/schemas/GuestDocumentRef" }
@@ -1705,13 +1680,10 @@ components:
     OnboardingDocumentsPending:
       type: object
       description: "Personal data saved; the optional documents step is next (the answer of saving the personal data)"
-      required: [status, nextStep, steps, personalData, documents, consent]
+      required: [status, nextStep, personalData, documents, consent]
       properties:
         status: { type: string, enum: [ONBOARDING] }
         nextStep: { type: string, enum: [DOCUMENTS] }
-        steps:
-          type: array
-          items: { $ref: "#/components/schemas/OnboardingStepState" }
         personalData: { $ref: "#/components/schemas/PersonalDataInput" }
         documents:
           type: array
@@ -1721,13 +1693,10 @@ components:
     OnboardingConsentPending:
       type: object
       description: "Documents step finished or skipped; only the consent is left (the answer of finishing the documents step)"
-      required: [status, nextStep, steps, personalData, documents, consent]
+      required: [status, nextStep, personalData, documents, consent]
       properties:
         status: { type: string, enum: [ONBOARDING] }
         nextStep: { type: string, enum: [CONSENT] }
-        steps:
-          type: array
-          items: { $ref: "#/components/schemas/OnboardingStepState" }
         personalData: { $ref: "#/components/schemas/PersonalDataInput" }
         documents:
           type: array
@@ -1736,12 +1705,9 @@ components:
 
     OnboardingCompleted:
       type: object
-      required: [status, steps, personalData, documents, consent]
+      required: [status, personalData, documents, consent]
       properties:
         status: { type: string, enum: [ACTIVE] }
-        steps:
-          type: array
-          items: { $ref: "#/components/schemas/OnboardingStepState" }
         personalData: { $ref: "#/components/schemas/PersonalDataInput" }
         documents:
           type: array
