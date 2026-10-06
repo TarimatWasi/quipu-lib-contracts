@@ -1041,7 +1041,7 @@ paths:
       responses:
         "200":
           description: Step saved
-          content: { application/json: { schema: { $ref: "#/components/schemas/OnboardingInProgress" } } }
+          content: { application/json: { schema: { $ref: "#/components/schemas/OnboardingDocumentsPending" } } }
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/OnboardingAccessDenied" }
@@ -1094,7 +1094,7 @@ paths:
       responses:
         "200":
           description: Step finished
-          content: { application/json: { schema: { $ref: "#/components/schemas/OnboardingInProgress" } } }
+          content: { application/json: { schema: { $ref: "#/components/schemas/OnboardingConsentPending" } } }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/OnboardingAccessDenied" }
         "409": { $ref: "#/components/responses/OnboardingConflict" }
@@ -1658,7 +1658,8 @@ components:
         is not there yet; from the documents step on it is always returned.
       oneOf:
         - $ref: "#/components/schemas/OnboardingPersonalDataPending"
-        - $ref: "#/components/schemas/OnboardingPersonalDataSaved"
+        - $ref: "#/components/schemas/OnboardingDocumentsPending"
+        - $ref: "#/components/schemas/OnboardingConsentPending"
 
     OnboardingPersonalDataPending:
       type: object
@@ -1674,12 +1675,29 @@ components:
           items: { $ref: "#/components/schemas/GuestDocumentRef" }
         consent: { $ref: "#/components/schemas/ConsentState" }
 
-    OnboardingPersonalDataSaved:
+    OnboardingDocumentsPending:
       type: object
+      description: "Personal data saved; the optional documents step is next (the answer of saving the personal data)"
       required: [status, nextStep, steps, personalData, documents, consent]
       properties:
         status: { type: string, enum: [ONBOARDING] }
-        nextStep: { type: string, enum: [DOCUMENTS, CONSENT], description: "First pending step, in the order of RN-33" }
+        nextStep: { type: string, enum: [DOCUMENTS] }
+        steps:
+          type: array
+          items: { $ref: "#/components/schemas/OnboardingStepState" }
+        personalData: { $ref: "#/components/schemas/PersonalDataInput" }
+        documents:
+          type: array
+          items: { $ref: "#/components/schemas/GuestDocumentRef" }
+        consent: { $ref: "#/components/schemas/ConsentState" }
+
+    OnboardingConsentPending:
+      type: object
+      description: "Documents step finished or skipped; only the consent is left (the answer of finishing the documents step)"
+      required: [status, nextStep, steps, personalData, documents, consent]
+      properties:
+        status: { type: string, enum: [ONBOARDING] }
+        nextStep: { type: string, enum: [CONSENT] }
         steps:
           type: array
           items: { $ref: "#/components/schemas/OnboardingStepState" }
