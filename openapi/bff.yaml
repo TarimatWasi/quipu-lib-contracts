@@ -504,7 +504,7 @@ paths:
       responses:
         "200":
           description: "Guest reactivated, login access restored"
-          content: { application/json: { schema: { $ref: "#/components/schemas/GuestSummary" } } }
+          content: { application/json: { schema: { $ref: "#/components/schemas/NonInactiveGuestSummary" } } }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -1507,6 +1507,19 @@ components:
         alreadyRegistered: { type: boolean, enum: [false] }
         access: { $ref: "#/components/schemas/AccessGrant" }
 
+    NonInactiveGuestSummary:
+      type: object
+      description: "A guest that is not inactive: what the duplicate-document answer (RN-18) and a successful reactivation (RN-12) return"
+      required: [id, documentType, documentNumber, name, type, status, hasLoginAccess]
+      properties:
+        id: { type: string, format: uuid }
+        documentType: { $ref: "#/components/schemas/DocumentType" }
+        documentNumber: { type: string }
+        name: { type: string, nullable: true, description: "null until the guest completes the personal data step" }
+        type: { type: string, enum: [CONTRACT, TEMPORARY] }
+        status: { type: string, enum: [PENDING_ACTIVATION, ONBOARDING, ACTIVE] }
+        hasLoginAccess: { type: boolean }
+
     PendingGuestSummary:
       type: object
       description: "A guest just created by the administrator: always pending activation (RN-36) and still without a name (RN-31)"
@@ -1525,7 +1538,7 @@ components:
       description: Answer when the document was already registered; the guest comes back unmodified and no access is generated (RN-18)
       required: [guest, alreadyRegistered]
       properties:
-        guest: { $ref: "#/components/schemas/GuestSummary" }
+        guest: { $ref: "#/components/schemas/NonInactiveGuestSummary" }
         alreadyRegistered: { type: boolean, enum: [true] }
 
     EmergencyContact:
@@ -1637,11 +1650,25 @@ components:
             urlExpiresAt: { type: string, format: date-time }
 
     OnboardingStepState:
+      description: "State of one onboarding step: only DOCUMENTS is optional (RN-37)"
+      oneOf:
+        - $ref: "#/components/schemas/RequiredOnboardingStep"
+        - $ref: "#/components/schemas/OptionalOnboardingStep"
+
+    RequiredOnboardingStep:
       type: object
       required: [step, required, completed]
       properties:
-        step: { type: string, enum: [PASSWORD, PERSONAL_DATA, DOCUMENTS, CONSENT] }
-        required: { type: boolean, description: "false only for DOCUMENTS (RN-37)" }
+        step: { type: string, enum: [PASSWORD, PERSONAL_DATA, CONSENT] }
+        required: { type: boolean, enum: [true] }
+        completed: { type: boolean }
+
+    OptionalOnboardingStep:
+      type: object
+      required: [step, required, completed]
+      properties:
+        step: { type: string, enum: [DOCUMENTS] }
+        required: { type: boolean, enum: [false] }
         completed: { type: boolean }
 
     OnboardingState:
