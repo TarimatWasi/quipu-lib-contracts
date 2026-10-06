@@ -1621,25 +1621,84 @@ components:
         skipped, then the consent accepted (COMPLETED, which is what an ACTIVE
         guest always has). One value, so impossible combinations cannot be expressed.
 
+    GuestDetailBase:
+      type: object
+      description: Fields every guest detail carries, whatever its lifecycle state
+      required: [id, documentType, documentNumber, name, type, hasLoginAccess, documentCount, paymentHistory]
+      properties:
+        id: { type: string, format: uuid }
+        documentType: { $ref: "#/components/schemas/DocumentType" }
+        documentNumber: { type: string }
+        name: { type: string, nullable: true, description: "null until the guest completes the personal data step" }
+        type: { type: string, enum: [CONTRACT, TEMPORARY] }
+        hasLoginAccess: { type: boolean }
+        phone: { type: string, nullable: true }
+        contactEmail: { type: string, nullable: true }
+        emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
+        stayStartDate: { type: string, format: date, description: "Only when type=TEMPORARY" }
+        stayEndDate: { type: string, format: date, description: "Only when type=TEMPORARY" }
+        agreedAmount: { type: number, description: "Only when type=TEMPORARY" }
+        documentCount: { type: integer, minimum: 0, maximum: 5 }
+        accessExpiresAt: { type: string, format: date-time, nullable: true, description: "Expiry of the current unused access, if there is one" }
+        contract: { $ref: "#/components/schemas/Contract" }
+        paymentHistory:
+          type: array
+          items: { $ref: "#/components/schemas/Payment" }
+
     GuestDetail:
+      description: >
+        Guest 360 detail. `status` and `onboardingProgress` go together
+        (RN-33, RN-36): pending activation has not started, an onboarding
+        guest is anywhere before the consent, an active guest is always
+        COMPLETED and an inactive one keeps the progress it had.
+      oneOf:
+        - $ref: "#/components/schemas/PendingGuestDetail"
+        - $ref: "#/components/schemas/OnboardingGuestDetail"
+        - $ref: "#/components/schemas/ActiveGuestDetail"
+        - $ref: "#/components/schemas/InactiveGuestDetail"
+      discriminator:
+        propertyName: status
+        mapping:
+          PENDING_ACTIVATION: "#/components/schemas/PendingGuestDetail"
+          ONBOARDING: "#/components/schemas/OnboardingGuestDetail"
+          ACTIVE: "#/components/schemas/ActiveGuestDetail"
+          INACTIVE: "#/components/schemas/InactiveGuestDetail"
+
+    PendingGuestDetail:
       allOf:
-        - $ref: "#/components/schemas/GuestSummary"
+        - $ref: "#/components/schemas/GuestDetailBase"
         - type: object
-          required: [onboardingProgress, documentCount, paymentHistory]
+          required: [status, onboardingProgress]
           properties:
-            phone: { type: string, nullable: true }
-            contactEmail: { type: string, nullable: true }
-            emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
-            stayStartDate: { type: string, format: date, description: "Only when type=TEMPORARY" }
-            stayEndDate: { type: string, format: date, description: "Only when type=TEMPORARY" }
-            agreedAmount: { type: number, description: "Only when type=TEMPORARY" }
+            status: { type: string, enum: [PENDING_ACTIVATION] }
+            onboardingProgress: { type: string, enum: [NOT_STARTED] }
+
+    OnboardingGuestDetail:
+      allOf:
+        - $ref: "#/components/schemas/GuestDetailBase"
+        - type: object
+          required: [status, onboardingProgress]
+          properties:
+            status: { type: string, enum: [ONBOARDING] }
+            onboardingProgress: { type: string, enum: [NOT_STARTED, PASSWORD_SET, PERSONAL_DATA_SAVED, DOCUMENTS_DONE] }
+
+    ActiveGuestDetail:
+      allOf:
+        - $ref: "#/components/schemas/GuestDetailBase"
+        - type: object
+          required: [status, onboardingProgress]
+          properties:
+            status: { type: string, enum: [ACTIVE] }
+            onboardingProgress: { type: string, enum: [COMPLETED] }
+
+    InactiveGuestDetail:
+      allOf:
+        - $ref: "#/components/schemas/GuestDetailBase"
+        - type: object
+          required: [status, onboardingProgress]
+          properties:
+            status: { type: string, enum: [INACTIVE] }
             onboardingProgress: { $ref: "#/components/schemas/OnboardingProgress" }
-            documentCount: { type: integer, minimum: 0, maximum: 5 }
-            accessExpiresAt: { type: string, format: date-time, nullable: true, description: "Expiry of the current unused access, if there is one" }
-            contract: { $ref: "#/components/schemas/Contract" }
-            paymentHistory:
-              type: array
-              items: { $ref: "#/components/schemas/Payment" }
 
     GuestDocumentRef:
       type: object
@@ -1671,8 +1730,9 @@ components:
 
     OnboardingInProgress:
       description: >
-        Onboarding still open. Before the personal data step is saved the data
-        is not there yet; from the documents step on it is always returned.
+        Onboarding still open (the password is already chosen). Before the personal
+        data step is saved the data is not there yet; from the documents step on it
+        is always returned.
       oneOf:
         - $ref: "#/components/schemas/OnboardingPersonalDataPending"
         - $ref: "#/components/schemas/OnboardingDocumentsPending"
@@ -1683,7 +1743,7 @@ components:
       required: [status, nextStep, documents, consent]
       properties:
         status: { type: string, enum: [ONBOARDING] }
-        nextStep: { type: string, enum: [PASSWORD, PERSONAL_DATA], description: "First pending step, in the order of RN-33" }
+        nextStep: { type: string, enum: [PERSONAL_DATA], description: "The password step is already done: a guest that still must change its temporary password cannot reach the onboarding operations (RF-12)" }
         documents:
           type: array
           items: { $ref: "#/components/schemas/GuestDocumentRef" }
