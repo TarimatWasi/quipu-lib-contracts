@@ -979,8 +979,19 @@ paths:
         "400": { description: "Invalid file (RF-15)" }
         "401": { $ref: "#/components/responses/NoSession" }
         "403":
-          description: "`VOUCHER_NO_ACTIVE_CONTRACT` (no active contract, RN-27) or `AUTH_ONBOARDING_REQUIRED` (the onboarding is not complete, RN-33)"
-          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+          description: >
+            `VOUCHER_NO_ACTIVE_CONTRACT` (no active contract, RN-27),
+            `AUTH_ONBOARDING_REQUIRED` (the onboarding is not complete, RN-33),
+            `AUTH_PASSWORD_CHANGE_REQUIRED` (temporary password not changed,
+            RF-12) or `AUTH_FORBIDDEN` (a guest of the other type, RN-09)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, message]
+                properties:
+                  code: { type: string, enum: [VOUCHER_NO_ACTIVE_CONTRACT, AUTH_ONBOARDING_REQUIRED, AUTH_PASSWORD_CHANGE_REQUIRED, AUTH_FORBIDDEN] }
+                  message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
         "409": { description: "A pending voucher already exists for this period (RN-15)" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
@@ -1528,7 +1539,7 @@ components:
         id: { type: string, format: uuid }
         documentType: { $ref: "#/components/schemas/DocumentType" }
         documentNumber: { type: string }
-        name: { type: string, nullable: true, description: "null until the guest completes the personal data step" }
+        name: { type: string, nullable: true, enum: [null], description: "Always null: the guest completes the personal data in the onboarding (RN-31)" }
         type: { type: string, enum: [CONTRACT, TEMPORARY] }
         status: { type: string, enum: [PENDING_ACTIVATION] }
         hasLoginAccess: { type: boolean }
@@ -1601,19 +1612,19 @@ components:
         hasLoginAccess: { type: boolean }
 
     OnboardingProgress:
-      type: object
-      required: [passwordSet, personalDataCompleted, documentsStepCompleted, consentAccepted]
-      properties:
-        passwordSet: { type: boolean }
-        personalDataCompleted: { type: boolean }
-        documentsStepCompleted: { type: boolean, description: "uploaded files or skipped; optional step (RN-37)" }
-        consentAccepted: { type: boolean }
+      type: string
+      enum: [NOT_STARTED, PASSWORD_SET, PERSONAL_DATA_SAVED, DOCUMENTS_DONE, COMPLETED]
+      description: >
+        Ordered onboarding progress of a guest (RN-33): the password is chosen,
+        then the personal data saved, then the documents step finished or
+        skipped, then the consent accepted (COMPLETED, which is what an ACTIVE
+        guest always has). One value, so impossible combinations cannot be expressed.
 
     GuestDetail:
       allOf:
         - $ref: "#/components/schemas/GuestSummary"
         - type: object
-          required: [onboarding, documentCount, paymentHistory]
+          required: [onboardingProgress, documentCount, paymentHistory]
           properties:
             phone: { type: string, nullable: true }
             contactEmail: { type: string, nullable: true }
@@ -1621,7 +1632,7 @@ components:
             stayStartDate: { type: string, format: date, description: "Only when type=TEMPORARY" }
             stayEndDate: { type: string, format: date, description: "Only when type=TEMPORARY" }
             agreedAmount: { type: number, description: "Only when type=TEMPORARY" }
-            onboarding: { $ref: "#/components/schemas/OnboardingProgress" }
+            onboardingProgress: { $ref: "#/components/schemas/OnboardingProgress" }
             documentCount: { type: integer, minimum: 0, maximum: 5 }
             accessExpiresAt: { type: string, format: date-time, nullable: true, description: "Expiry of the current unused access, if there is one" }
             contract: { $ref: "#/components/schemas/Contract" }
