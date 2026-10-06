@@ -411,7 +411,7 @@ paths:
         "201":
           description: Guest created pending activation, with its first access
           headers:
-            Cache-Control: { schema: { type: string, enum: ["no-store"] } }
+            Cache-Control: { required: true, schema: { type: string, enum: ["no-store"] } }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/GuestCreated" }
@@ -531,7 +531,7 @@ paths:
         "200":
           description: New access generated; the previous one is revoked
           headers:
-            Cache-Control: { schema: { type: string, enum: ["no-store"] } }
+            Cache-Control: { required: true, schema: { type: string, enum: ["no-store"] } }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AccessGrant" }
@@ -557,7 +557,7 @@ paths:
         "200":
           description: Documents of the guest (empty if none was uploaded)
           headers:
-            Cache-Control: { schema: { type: string, enum: ["no-store"] } }
+            Cache-Control: { required: true, schema: { type: string, enum: ["no-store"] } }
           content:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/GuestDocument" } }
@@ -1543,11 +1543,24 @@ components:
         completed: { type: boolean }
 
     OnboardingState:
+      description: >
+        Onboarding state. While the guest is in onboarding `nextStep` names the
+        step to go to; once active there is no `nextStep` (RN-33, RN-36).
+      oneOf:
+        - $ref: "#/components/schemas/OnboardingInProgress"
+        - $ref: "#/components/schemas/OnboardingCompleted"
+      discriminator:
+        propertyName: status
+        mapping:
+          ONBOARDING: "#/components/schemas/OnboardingInProgress"
+          ACTIVE: "#/components/schemas/OnboardingCompleted"
+
+    OnboardingInProgress:
       type: object
       required: [status, nextStep, steps, documents, consent]
       properties:
-        status: { type: string, enum: [ONBOARDING, ACTIVE] }
-        nextStep: { type: string, enum: [PASSWORD, PERSONAL_DATA, DOCUMENTS, CONSENT], nullable: true, description: "null when the onboarding is complete" }
+        status: { type: string, enum: [ONBOARDING] }
+        nextStep: { type: string, enum: [PASSWORD, PERSONAL_DATA, DOCUMENTS, CONSENT], description: "First pending step, in the order of RN-33" }
         steps:
           type: array
           items: { $ref: "#/components/schemas/OnboardingStepState" }
@@ -1555,13 +1568,29 @@ components:
         documents:
           type: array
           items: { $ref: "#/components/schemas/GuestDocumentRef" }
-        consent:
-          type: object
-          required: [version, text, accepted]
-          properties:
-            version: { type: string }
-            text: { type: string, description: "Consent text in force, in Spanish" }
-            accepted: { type: boolean }
+        consent: { $ref: "#/components/schemas/ConsentState" }
+
+    OnboardingCompleted:
+      type: object
+      required: [status, steps, documents, consent]
+      properties:
+        status: { type: string, enum: [ACTIVE] }
+        steps:
+          type: array
+          items: { $ref: "#/components/schemas/OnboardingStepState" }
+        personalData: { $ref: "#/components/schemas/PersonalDataInput" }
+        documents:
+          type: array
+          items: { $ref: "#/components/schemas/GuestDocumentRef" }
+        consent: { $ref: "#/components/schemas/ConsentState" }
+
+    ConsentState:
+      type: object
+      required: [version, text, accepted]
+      properties:
+        version: { type: string }
+        text: { type: string, description: "Consent text in force, in Spanish" }
+        accepted: { type: boolean }
 
     Contract:
       type: object
