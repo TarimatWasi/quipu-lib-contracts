@@ -221,6 +221,7 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/Environment" }
         "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
     post:
       operationId: createEnvironment
       tags: [admin-environments]
@@ -235,16 +236,18 @@ paths:
               type: object
               required: [code, type]
               properties:
-                code: { type: string }
+                code: { type: string, minLength: 1, maxLength: 50, description: "Unique, e.g. \"201\". Surrounding spaces are ignored" }
                 type: { type: string, enum: [ROOM, CABIN] }
       responses:
         "201":
-          description: Environment created
+          description: Environment created, always ACTIVE
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Environment" }
         "400": { $ref: "#/components/responses/ValidationFailed" }
-        "409": { description: "Duplicate environment code (RN-*)" }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/EnvironmentCodeTaken" }
 
   /admin/environments/{id}:
     get:
@@ -259,6 +262,7 @@ paths:
           description: Environment detail
           content: { application/json: { schema: { $ref: "#/components/schemas/Environment" } } }
         "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
       operationId: updateEnvironment
@@ -268,20 +272,24 @@ paths:
       x-roles: [ADMIN]
       parameters: [{ $ref: "#/components/parameters/Id" }]
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
+              minProperties: 1
               properties:
-                code: { type: string }
+                code: { type: string, minLength: 1, maxLength: 50 }
                 type: { type: string, enum: [ROOM, CABIN] }
       responses:
         "200":
-          description: Environment updated
+          description: Environment updated (status is not changed here, see deactivate and reactivate)
           content: { application/json: { schema: { $ref: "#/components/schemas/Environment" } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { description: "Duplicate environment code (RN-*)" }
+        "409": { $ref: "#/components/responses/EnvironmentCodeTaken" }
 
   /admin/environments/{id}/deactivate:
     post:
@@ -935,6 +943,16 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
     NotFound:
       description: Resource does not exist
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: The session is valid but its role cannot use the operation (RN-08, RN-09). The `code` is `AUTH_FORBIDDEN`
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    EnvironmentCodeTaken:
+      description: Another environment already has that code (RF-01). The `code` is `ENVIRONMENT_CODE_TAKEN` and `field` is `code`
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
