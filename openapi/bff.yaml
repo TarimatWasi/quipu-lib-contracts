@@ -914,7 +914,7 @@ paths:
           description: Status per period
           content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/PeriodStatus" } } } }
         "401": { $ref: "#/components/responses/NoSession" }
-        "403": { $ref: "#/components/responses/OnboardingRequired" }
+        "403": { $ref: "#/components/responses/GuestAccessDenied" }
 
   /guest/contract:
     get:
@@ -932,7 +932,7 @@ paths:
           description: Own contract, whatever its status
           content: { application/json: { schema: { $ref: "#/components/schemas/Contract" } } }
         "401": { $ref: "#/components/responses/NoSession" }
-        "403": { $ref: "#/components/responses/OnboardingRequired" }
+        "403": { $ref: "#/components/responses/GuestAccessDenied" }
         "404": { description: "No contract was ever associated with this guest" }
 
   /guest/payments:
@@ -947,7 +947,7 @@ paths:
           description: Own payment history
           content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Payment" } } } }
         "401": { $ref: "#/components/responses/NoSession" }
-        "403": { $ref: "#/components/responses/OnboardingRequired" }
+        "403": { $ref: "#/components/responses/GuestAccessDenied" }
     post:
       operationId: uploadPaymentVoucher
       tags: [guest]
@@ -994,7 +994,7 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/GuestSummary" } } }
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
-        "403": { $ref: "#/components/responses/OnboardingRequired" }
+        "403": { $ref: "#/components/responses/GuestAccessDenied" }
 
   # ───────────────────────── GUEST ONBOARDING (RF-14, RF-20, CU-11, CU-24..26) ─────────────────────────
   # Open to a GUEST of either type. Until the onboarding is complete every other
@@ -1016,7 +1016,7 @@ paths:
           description: Current onboarding state
           content: { application/json: { schema: { $ref: "#/components/schemas/OnboardingState" } } }
         "401": { $ref: "#/components/responses/NoSession" }
-        "403": { $ref: "#/components/responses/Forbidden" }
+        "403": { $ref: "#/components/responses/GuestAccessDenied" }
 
   /guest/onboarding/personal-data:
     put:
@@ -1037,7 +1037,7 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/OnboardingState" } } }
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
-        "403": { $ref: "#/components/responses/Forbidden" }
+        "403": { $ref: "#/components/responses/GuestAccessDenied" }
         "409": { $ref: "#/components/responses/OnboardingConflict" }
 
   /guest/onboarding/documents:
@@ -1069,7 +1069,7 @@ paths:
           description: "`DOCUMENT_INVALID_FILE` (type or size not allowed, RF-15)"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "401": { $ref: "#/components/responses/NoSession" }
-        "403": { $ref: "#/components/responses/Forbidden" }
+        "403": { $ref: "#/components/responses/GuestAccessDenied" }
         "409":
           description: >
             `DOCUMENT_LIMIT_REACHED` (the guest already has 5 files),
@@ -1089,7 +1089,7 @@ paths:
           description: Step finished
           content: { application/json: { schema: { $ref: "#/components/schemas/OnboardingState" } } }
         "401": { $ref: "#/components/responses/NoSession" }
-        "403": { $ref: "#/components/responses/Forbidden" }
+        "403": { $ref: "#/components/responses/GuestAccessDenied" }
         "409": { $ref: "#/components/responses/OnboardingConflict" }
 
   /guest/onboarding/consent:
@@ -1118,7 +1118,7 @@ paths:
             version in force
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "401": { $ref: "#/components/responses/NoSession" }
-        "403": { $ref: "#/components/responses/Forbidden" }
+        "403": { $ref: "#/components/responses/GuestAccessDenied" }
         "409": { $ref: "#/components/responses/OnboardingConflict" }
 
   # ───────────────────────── TEMPORARY GUEST (RF-04, RF-06, CU-21, CU-22) ─────────────────────────
@@ -1134,7 +1134,7 @@ paths:
           description: Stay payment status
           content: { application/json: { schema: { $ref: "#/components/schemas/PeriodStatus" } } }
         "401": { $ref: "#/components/responses/NoSession" }
-        "403": { $ref: "#/components/responses/OnboardingRequired" }
+        "403": { $ref: "#/components/responses/GuestAccessDenied" }
 
   /temporary-guest/payments:
     post:
@@ -1162,7 +1162,7 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/Payment" } } }
         "400": { description: "Invalid file (RF-15)" }
         "401": { $ref: "#/components/responses/NoSession" }
-        "403": { $ref: "#/components/responses/OnboardingRequired" }
+        "403": { $ref: "#/components/responses/GuestAccessDenied" }
         "409": { description: "A voucher already exists for this stay, pending or approved (RN-03, RN-15)" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
@@ -1183,7 +1183,7 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/GuestSummary" } } }
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
-        "403": { $ref: "#/components/responses/OnboardingRequired" }
+        "403": { $ref: "#/components/responses/GuestAccessDenied" }
 
 components:
   securitySchemes:
@@ -1286,18 +1286,22 @@ components:
               code: { type: string, enum: [GUEST_INACTIVE] }
               message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
               guestId: { type: string, format: uuid }
-    OnboardingRequired:
+    GuestAccessDenied:
       description: >
-        The guest has not completed the onboarding (RN-33). The `code` is
-        always `AUTH_ONBOARDING_REQUIRED`; the client redirects to the first
-        pending step (`nextStep` of `GET /guest/onboarding`)
+        The guest session cannot use the operation yet or at all. The `code` is
+        `AUTH_ONBOARDING_REQUIRED` while the onboarding is incomplete (RN-33: the
+        client redirects to the first pending step, `nextStep` of `GET
+        /guest/onboarding`), `AUTH_PASSWORD_CHANGE_REQUIRED` while a temporary
+        password has not been changed (RF-12) and `AUTH_FORBIDDEN` for a guest
+        of the other type (a CONTRACT guest on `/temporary-guest/**` or the
+        reverse, RN-09)
       content:
         application/json:
           schema:
             type: object
             required: [code, message]
             properties:
-              code: { type: string, enum: [AUTH_ONBOARDING_REQUIRED] }
+              code: { type: string, enum: [AUTH_ONBOARDING_REQUIRED, AUTH_PASSWORD_CHANGE_REQUIRED, AUTH_FORBIDDEN] }
               message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
     OnboardingConflict:
       description: >
@@ -1497,7 +1501,7 @@ components:
       type: object
       required: [accepted, consentVersion]
       properties:
-        accepted: { type: boolean, description: "Must be true (RN-14)" }
+        accepted: { type: boolean, enum: [true], description: "Must be true (RN-14); anything else is answered 400 CONSENT_NOT_ACCEPTED" }
         consentVersion: { type: string, description: "Version of the text being accepted; must be the one in `OnboardingState.consent.version`" }
 
     GuestSummary:
@@ -1599,7 +1603,7 @@ components:
 
     OnboardingCompleted:
       type: object
-      required: [status, steps, documents, consent]
+      required: [status, steps, personalData, documents, consent]
       properties:
         status: { type: string, enum: [ACTIVE] }
         steps:
