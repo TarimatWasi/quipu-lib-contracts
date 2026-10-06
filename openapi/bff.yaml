@@ -1041,7 +1041,7 @@ paths:
       responses:
         "200":
           description: Step saved
-          content: { application/json: { schema: { $ref: "#/components/schemas/OnboardingState" } } }
+          content: { application/json: { schema: { $ref: "#/components/schemas/OnboardingInProgress" } } }
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/OnboardingAccessDenied" }
@@ -1094,7 +1094,7 @@ paths:
       responses:
         "200":
           description: Step finished
-          content: { application/json: { schema: { $ref: "#/components/schemas/OnboardingState" } } }
+          content: { application/json: { schema: { $ref: "#/components/schemas/OnboardingInProgress" } } }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/OnboardingAccessDenied" }
         "409": { $ref: "#/components/responses/OnboardingConflict" }
@@ -1364,12 +1364,14 @@ components:
     SessionInfo:
       description: >
         Session data answered by login, link activation and `GET /auth/me`,
-        in one of three shapes: the administrator, a guest still in onboarding
-        (with the step to go to) or an active guest. `name` is the guest's name;
+        in one of four shapes: the administrator, a guest that must still set its
+        password (temporary password), a guest in onboarding with the password already
+        set (with the step to go to) or an active guest. `name` is the guest's name;
         while the guest has not completed the personal data step it is the
         document in text (for example "DNI 12345678") so the field is always there.
       oneOf:
         - $ref: "#/components/schemas/AdminSession"
+        - $ref: "#/components/schemas/GuestPasswordPendingSession"
         - $ref: "#/components/schemas/GuestOnboardingSession"
         - $ref: "#/components/schemas/GuestActiveSession"
 
@@ -1381,17 +1383,29 @@ components:
         name: { type: string }
         mustChangePassword: { type: boolean, description: "true until the administrator changes a temporary password (RF-12)" }
 
-    GuestOnboardingSession:
+    GuestPasswordPendingSession:
       type: object
-      description: A guest whose onboarding is incomplete (RN-33)
+      description: A guest that logged in with a temporary password and must choose its own first (RF-12, RN-33)
       required: [role, guestType, name, mustChangePassword, guestStatus, nextOnboardingStep]
       properties:
         role: { type: string, enum: [GUEST] }
         guestType: { type: string, enum: [CONTRACT, TEMPORARY] }
         name: { type: string }
-        mustChangePassword: { type: boolean, description: "true on first login with a temporary password, until the guest changes it (RF-12)" }
+        mustChangePassword: { type: boolean, enum: [true] }
         guestStatus: { type: string, enum: [ONBOARDING] }
-        nextOnboardingStep: { type: string, enum: [PASSWORD, PERSONAL_DATA, DOCUMENTS, CONSENT], description: "First pending step, in the order of RN-33" }
+        nextOnboardingStep: { type: string, enum: [PASSWORD] }
+
+    GuestOnboardingSession:
+      type: object
+      description: A guest whose password is set and whose onboarding still has steps left (RN-33)
+      required: [role, guestType, name, mustChangePassword, guestStatus, nextOnboardingStep]
+      properties:
+        role: { type: string, enum: [GUEST] }
+        guestType: { type: string, enum: [CONTRACT, TEMPORARY] }
+        name: { type: string }
+        mustChangePassword: { type: boolean, enum: [false] }
+        guestStatus: { type: string, enum: [ONBOARDING] }
+        nextOnboardingStep: { type: string, enum: [PERSONAL_DATA, DOCUMENTS, CONSENT], description: "First pending step, in the order of RN-33" }
 
     GuestActiveSession:
       type: object
