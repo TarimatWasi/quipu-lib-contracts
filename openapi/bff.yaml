@@ -301,8 +301,9 @@ paths:
       x-roles: [ADMIN]
       parameters: [{ $ref: "#/components/parameters/Id" }]
       responses:
-        "204": { description: "Environment deactivated, history preserved" }
+        "204": { description: "Environment deactivated, history preserved; deactivating an inactive one changes nothing" }
         "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /admin/environments/{id}/reactivate:
@@ -314,8 +315,9 @@ paths:
       x-roles: [ADMIN]
       parameters: [{ $ref: "#/components/parameters/Id" }]
       responses:
-        "204": { description: "Environment reactivated, visible in active listings again" }
+        "204": { description: "Environment reactivated, visible in active listings again; reactivating an active one changes nothing" }
         "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   # ───────────────────────── ADMIN: GUESTS (RF-02, RF-13, RF-14, RF-17, CU-02, CU-06, CU-10, CU-11, CU-13) ─────────────────────────
