@@ -138,10 +138,17 @@ paths:
                 newPassword: { type: string, minLength: 8, description: "At most 72 bytes in UTF-8 (bcrypt limit)" }
       responses:
         "200":
-          description: "Access activated — HttpOnly JWT cookie issued; the guest goes on to the onboarding if it is incomplete"
+          description: >
+            Access activated — HttpOnly JWT cookie issued. Always a guest
+            session with the password already set: the guest goes on to the
+            onboarding (never back to the password step) or, if it was already
+            active (administrator-assisted recovery), straight to the home
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/SessionInfo" }
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ActivatedOnboardingSession"
+                  - $ref: "#/components/schemas/ActivatedActiveSession"
         "400":
           description: >
             `AUTH_INVALID_OR_EXPIRED_CODE` (unknown, expired, revoked or
@@ -1016,7 +1023,7 @@ paths:
           description: Current onboarding state
           content: { application/json: { schema: { $ref: "#/components/schemas/OnboardingState" } } }
         "401": { $ref: "#/components/responses/NoSession" }
-        "403": { $ref: "#/components/responses/GuestAccessDenied" }
+        "403": { $ref: "#/components/responses/OnboardingAccessDenied" }
 
   /guest/onboarding/personal-data:
     put:
@@ -1037,7 +1044,7 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/OnboardingState" } } }
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
-        "403": { $ref: "#/components/responses/GuestAccessDenied" }
+        "403": { $ref: "#/components/responses/OnboardingAccessDenied" }
         "409": { $ref: "#/components/responses/OnboardingConflict" }
 
   /guest/onboarding/documents:
@@ -1069,7 +1076,7 @@ paths:
           description: "`DOCUMENT_INVALID_FILE` (type or size not allowed, RF-15)"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "401": { $ref: "#/components/responses/NoSession" }
-        "403": { $ref: "#/components/responses/GuestAccessDenied" }
+        "403": { $ref: "#/components/responses/OnboardingAccessDenied" }
         "409":
           description: >
             `DOCUMENT_LIMIT_REACHED` (the guest already has 5 files),
@@ -1089,7 +1096,7 @@ paths:
           description: Step finished
           content: { application/json: { schema: { $ref: "#/components/schemas/OnboardingState" } } }
         "401": { $ref: "#/components/responses/NoSession" }
-        "403": { $ref: "#/components/responses/GuestAccessDenied" }
+        "403": { $ref: "#/components/responses/OnboardingAccessDenied" }
         "409": { $ref: "#/components/responses/OnboardingConflict" }
 
   /guest/onboarding/consent:
@@ -1109,8 +1116,8 @@ paths:
         content: { application/json: { schema: { $ref: "#/components/schemas/ConsentInput" } } }
       responses:
         "200":
-          description: "Consent recorded; the state shows `status` ACTIVE when the onboarding is complete"
-          content: { application/json: { schema: { $ref: "#/components/schemas/OnboardingState" } } }
+          description: "Consent recorded and the guest is now ACTIVE: the onboarding is complete"
+          content: { application/json: { schema: { $ref: "#/components/schemas/OnboardingCompleted" } } }
         "400":
           description: >
             `CONSENT_NOT_ACCEPTED` (`accepted` is not true) or
@@ -1118,7 +1125,7 @@ paths:
             version in force
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "401": { $ref: "#/components/responses/NoSession" }
-        "403": { $ref: "#/components/responses/GuestAccessDenied" }
+        "403": { $ref: "#/components/responses/OnboardingAccessDenied" }
         "409": { $ref: "#/components/responses/OnboardingConflict" }
 
   # ───────────────────────── TEMPORARY GUEST (RF-04, RF-06, CU-21, CU-22) ─────────────────────────
@@ -1286,6 +1293,20 @@ components:
               code: { type: string, enum: [GUEST_INACTIVE] }
               message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
               guestId: { type: string, format: uuid }
+    OnboardingAccessDenied:
+      description: >
+        A guest session that cannot use the onboarding operation. The `code` is
+        `AUTH_PASSWORD_CHANGE_REQUIRED` while a temporary password has not been
+        changed (RF-12) or `AUTH_FORBIDDEN` for the administrator. Never
+        `AUTH_ONBOARDING_REQUIRED`: these are the routes an incomplete guest must reach
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [code, message]
+            properties:
+              code: { type: string, enum: [AUTH_PASSWORD_CHANGE_REQUIRED, AUTH_FORBIDDEN] }
+              message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
     GuestAccessDenied:
       description: >
         The guest session cannot use the operation yet or at all. The `code` is
@@ -1381,6 +1402,29 @@ components:
         guestType: { type: string, enum: [CONTRACT, TEMPORARY] }
         name: { type: string }
         mustChangePassword: { type: boolean, description: "true while a temporary password has not been changed (RF-12)" }
+        guestStatus: { type: string, enum: [ACTIVE] }
+
+    ActivatedOnboardingSession:
+      type: object
+      description: A guest that has just set its password through the activation link and still has onboarding steps left
+      required: [role, guestType, name, mustChangePassword, guestStatus, nextOnboardingStep]
+      properties:
+        role: { type: string, enum: [GUEST] }
+        guestType: { type: string, enum: [CONTRACT, TEMPORARY] }
+        name: { type: string }
+        mustChangePassword: { type: boolean, enum: [false] }
+        guestStatus: { type: string, enum: [ONBOARDING] }
+        nextOnboardingStep: { type: string, enum: [PERSONAL_DATA, DOCUMENTS, CONSENT] }
+
+    ActivatedActiveSession:
+      type: object
+      description: An already active guest that recovered its access with a new link
+      required: [role, guestType, name, mustChangePassword, guestStatus]
+      properties:
+        role: { type: string, enum: [GUEST] }
+        guestType: { type: string, enum: [CONTRACT, TEMPORARY] }
+        name: { type: string }
+        mustChangePassword: { type: boolean, enum: [false] }
         guestStatus: { type: string, enum: [ACTIVE] }
 
     GuestStatus:
