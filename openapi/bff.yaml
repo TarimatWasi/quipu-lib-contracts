@@ -23,11 +23,11 @@ servers:
 
 tags:
   - name: auth
-    description: Login, session and password recovery (RF-08, RF-12, RF-16)
+    description: Login, link activation, session and password recovery (RF-08, RF-11, RF-12, RF-16)
   - name: admin-environments
     description: Rentable environment inventory (RF-01, RF-13)
   - name: admin-guests
-    description: Guest registration, detail and access credentials (RF-02, RF-13, RF-14, RF-17)
+    description: Guest minimal registration, detail, access generation and onboarding documents (RF-02, RF-11, RF-13, RF-17)
   - name: admin-contracts
     description: Contract upload, validity and termination (RF-03, RF-09)
   - name: admin-payments
@@ -38,6 +38,8 @@ tags:
     description: Operating expenses (RF-07)
   - name: admin-dashboard
     description: Home summary and monthly income/expense balance (RF-18)
+  - name: guest-onboarding
+    description: Mandatory, resumable onboarding of a new guest of either type (RF-14, RF-20)
   - name: guest
     description: Self-service for a guest with an active contract (RF-04, RF-06, RF-10)
   - name: temporary-guest
@@ -67,16 +69,19 @@ paths:
           description: "Session started — HttpOnly JWT cookie issued (SameSite=Lax; Secure)"
           content:
             application/json:
-              schema:
-                type: object
-                required: [role, name, mustChangePassword]
-                properties:
-                  role: { type: string, enum: [ADMIN, GUEST] }
-                  guestType: { type: string, enum: [CONTRACT, TEMPORARY], nullable: true, description: "only when role is GUEST" }
-                  name: { type: string }
-                  mustChangePassword: { type: boolean, description: "true on first login with a temporary password (RF-12)" }
+              schema: { $ref: "#/components/schemas/SessionInfo" }
         "400": { $ref: "#/components/responses/ValidationFailed" }
-        "401": { $ref: "#/components/responses/InvalidCredentials" }
+        "401":
+          description: >
+            `AUTH_INVALID_CREDENTIALS` (incorrect document or password) or
+            `AUTH_TEMPORARY_PASSWORD_EXPIRED` (the temporary password was
+            correct but its 30 minutes are over, RN-32: the guest asks the
+            administrator for a new access). The expired code is only given
+            when the password matched, so it never reveals whether a document
+            exists
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "403": { $ref: "#/components/responses/AccountDisabled" }
         "423": { $ref: "#/components/responses/AccountLocked" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
@@ -99,18 +104,55 @@ paths:
       security: [{ cookieAuth: [] }]
       responses:
         "200":
-          description: Active session data
+          description: >
+            Active session data, read from the account in the database (not
+            from the token), so the client can restore the session after a reload
           content:
             application/json:
-              schema:
-                type: object
-                required: [role, name, mustChangePassword]
-                properties:
-                  role: { type: string, enum: [ADMIN, GUEST] }
-                  guestType: { type: string, enum: [CONTRACT, TEMPORARY], nullable: true, description: "only when role is GUEST" }
-                  name: { type: string }
-                  mustChangePassword: { type: boolean, description: "current state of the account, read from the database (RF-12): lets the client restore the session after a reload" }
+              schema: { $ref: "#/components/schemas/SessionInfo" }
         "401": { $ref: "#/components/responses/NoSession" }
+
+  /auth/activate:
+    post:
+      operationId: activateAccess
+      tags: [auth]
+      summary: Activate access with the single-use link and choose the password (RF-11, RF-12, CU-24)
+      description: >
+        The administrator hands the guest a link (RN-32) whose token is
+        single-use and expires 30 minutes after it was generated. The guest
+        opens it and chooses their own password; the session starts right
+        away. It also serves an already active guest whose password was lost:
+        the administrator generates a new access (`POST
+        /admin/guests/{id}/access`) and the guest sets a new password with it;
+        the previous password stays valid until the link is used.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, newPassword]
+              properties:
+                token: { type: string, description: "Single-use token from the activation link" }
+                newPassword: { type: string, minLength: 8, description: "At most 72 bytes in UTF-8 (bcrypt limit)" }
+      responses:
+        "200":
+          description: "Access activated — HttpOnly JWT cookie issued; the guest goes on to the onboarding if it is incomplete"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionInfo" }
+        "400":
+          description: >
+            `AUTH_INVALID_OR_EXPIRED_CODE` (unknown, expired, revoked or
+            already used token: one generic answer for all of them),
+            `AUTH_WEAK_PASSWORD` (with `field: newPassword`; the token is not
+            consumed) or `VALIDATION_ERROR` if a field is missing
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403": { $ref: "#/components/responses/AccountDisabled" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /auth/change-password:
     post:
@@ -334,7 +376,8 @@ paths:
           schema: { type: string, enum: [CONTRACT, TEMPORARY] }
         - name: status
           in: query
-          schema: { type: string, enum: [ACTIVE, INACTIVE, ALL], default: ACTIVE }
+          description: "CURRENT is every guest except the inactive ones (pending activation, onboarding and active)"
+          schema: { type: string, enum: [CURRENT, PENDING_ACTIVATION, ONBOARDING, ACTIVE, INACTIVE, ALL], default: CURRENT }
       responses:
         "200":
           description: Guest list
@@ -345,7 +388,18 @@ paths:
     post:
       operationId: createGuest
       tags: [admin-guests]
-      summary: Register guest (RF-02, RF-14, CU-02) — triggers credential email if an email is provided (RF-11)
+      summary: Register guest with the minimal data and generate their access (RF-02, RF-11, CU-02, CU-09)
+      description: >
+        The administrator registers only the document type and number and the
+        guest type (RN-31); optionally a phone or an email to notify. The guest
+        completes everything else in the onboarding (RF-20). The guest is
+        created pending activation and the response carries the first access
+        (link or temporary password, valid 30 minutes, RN-32). If an email was
+        given, the link is also sent by email, best-effort. If the document is
+        already registered nothing is created or modified: the existing guest
+        comes back with `alreadyRegistered: true` and a 200 (RN-18).
+        The response is never cacheable (`Cache-Control: no-store`) because it
+        carries the access in clear.
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       requestBody:
@@ -355,14 +409,21 @@ paths:
             schema: { $ref: "#/components/schemas/GuestInput" }
       responses:
         "201":
-          description: >
-            Guest created (or linked to an existing person by document id,
-            RN-18)
+          description: Guest created pending activation, with its first access
+          headers:
+            Cache-Control: { schema: { type: string, enum: ["no-store"] } }
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/GuestSummary" }
-        "400":
-          description: "Consent not accepted (RN-14) or invalid document id"
+              schema: { $ref: "#/components/schemas/CreateGuestResult" }
+        "200":
+          description: "The document was already registered: the existing guest, unmodified, with `alreadyRegistered: true` and no `access` (RN-18)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateGuestResult" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/GuestInactive" }
 
   /admin/guests/{id}:
     get:
@@ -382,8 +443,9 @@ paths:
       operationId: updateGuest
       tags: [admin-guests]
       summary: >
-        Edit guest — contact data and type-specific fields only; document
-        id and consent are immutable after creation (RN-18, RN-14)
+        Correct the document (only while pending activation) and manage the
+        stay data (RN-17, RN-36). The personal and contact data belong to the
+        guest alone and are edited through the guest's own endpoints.
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       parameters: [{ $ref: "#/components/parameters/Id" }]
@@ -393,8 +455,19 @@ paths:
         "200":
           description: Guest updated
           content: { application/json: { schema: { $ref: "#/components/schemas/GuestSummary" } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: >
+            `GUEST_DOCUMENT_LOCKED` (the document can only be corrected while
+            the guest is pending activation, RN-36) or `GUEST_DOCUMENT_TAKEN`
+            (the corrected document already belongs to another guest, RN-18),
+            both with the `field` that caused it
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /admin/guests/{id}/deactivate:
     post:
@@ -413,28 +486,84 @@ paths:
     post:
       operationId: reactivateGuest
       tags: [admin-guests]
-      summary: Reactivate a previously deactivated guest — restores login access (RN-12)
+      summary: Reactivate a previously deactivated guest — restores login access and the state it had when deactivated (RF-13, RN-12, CU-28)
+      description: >
+        Answers the guest as it stands after reactivating: if the access it
+        had expired meanwhile the guest comes back pending activation and the
+        administrator offers to generate a new access.
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       parameters: [{ $ref: "#/components/parameters/Id" }]
       responses:
-        "204": { description: "Guest reactivated, login access restored" }
+        "200":
+          description: "Guest reactivated, login access restored"
+          content: { application/json: { schema: { $ref: "#/components/schemas/GuestSummary" } } }
         "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
-  /admin/guests/{id}/resend-credentials:
+  /admin/guests/{id}/access:
     post:
-      operationId: resendGuestCredentials
+      operationId: generateGuestAccess
       tags: [admin-guests]
-      summary: Resend credentials — invalidates the previous temporary password (RF-17, CU-13)
+      summary: Generate a new access (link or temporary password) for a guest — invalidates the previous one (RF-17, CU-13)
+      description: >
+        Covers an expired, lost or undelivered access, and a guest without
+        email. Any guest that is not inactive qualifies, active ones
+        included (an administrator-assisted password recovery). Generating
+        a new access revokes the previous one, but the guest's current password
+        stays valid until the new link or temporary password is used. The
+        response carries the access in clear and is never cacheable
+        (`Cache-Control: no-store`).
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [accessMode]
+              properties:
+                accessMode: { $ref: "#/components/schemas/AccessMode" }
+      responses:
+        "200":
+          description: New access generated; the previous one is revoked
+          headers:
+            Cache-Control: { schema: { type: string, enum: ["no-store"] } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessGrant" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/GuestInactive" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /admin/guests/{id}/documents:
+    get:
+      operationId: listGuestDocuments
+      tags: [admin-guests]
+      summary: Documents the guest uploaded in the onboarding, with a short-lived signed link (RN-37, CU-27)
+      description: >
+        Only the administrator sees these files. Each `url` is a signed R2
+        link that expires 5 minutes after the response; ask again for a new one.
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       parameters: [{ $ref: "#/components/parameters/Id" }]
       responses:
-        "202": { description: Resend email queued }
+        "200":
+          description: Documents of the guest (empty if none was uploaded)
+          headers:
+            Cache-Control: { schema: { type: string, enum: ["no-store"] } }
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/GuestDocument" } }
         "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "422": { description: "Guest has no registered email" }
 
   /admin/guests/{id}/payments:
     get:
@@ -785,6 +914,7 @@ paths:
           description: Status per period
           content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/PeriodStatus" } } } }
         "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/OnboardingRequired" }
 
   /guest/contract:
     get:
@@ -802,6 +932,7 @@ paths:
           description: Own contract, whatever its status
           content: { application/json: { schema: { $ref: "#/components/schemas/Contract" } } }
         "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/OnboardingRequired" }
         "404": { description: "No contract was ever associated with this guest" }
 
   /guest/payments:
@@ -816,6 +947,7 @@ paths:
           description: Own payment history
           content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Payment" } } } }
         "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/OnboardingRequired" }
     post:
       operationId: uploadPaymentVoucher
       tags: [guest]
@@ -839,7 +971,9 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/Payment" } } }
         "400": { description: "Invalid file (RF-15)" }
         "401": { $ref: "#/components/responses/NoSession" }
-        "403": { description: "No active contract (RN-27)" }
+        "403":
+          description: "`VOUCHER_NO_ACTIVE_CONTRACT` (no active contract, RN-27) or `AUTH_ONBOARDING_REQUIRED` (the onboarding is not complete, RN-33)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "409": { description: "A pending voucher already exists for this period (RN-15)" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
@@ -847,23 +981,145 @@ paths:
     patch:
       operationId: updateOwnProfile
       tags: [guest]
-      summary: Edit own contact data (CU-20)
+      summary: Edit own personal and contact data (CU-20, RN-17)
       security: [{ cookieAuth: [] }]
       x-roles: [GUEST] # guestType CONTRACT
       requestBody:
         content:
           application/json:
-            schema:
-              type: object
-              properties:
-                phone: { type: string }
-                contactEmail: { type: string, format: email }
+            schema: { $ref: "#/components/schemas/ProfileUpdateInput" }
       responses:
         "200":
           description: Profile updated
           content: { application/json: { schema: { $ref: "#/components/schemas/GuestSummary" } } }
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/OnboardingRequired" }
+
+  # ───────────────────────── GUEST ONBOARDING (RF-14, RF-20, CU-11, CU-24..26) ─────────────────────────
+  # Open to a GUEST of either type. Until the onboarding is complete every other
+  # /guest/** and /temporary-guest/** operation answers 403 AUTH_ONBOARDING_REQUIRED.
+  /guest/onboarding:
+    get:
+      operationId: getOnboarding
+      tags: [guest-onboarding]
+      summary: Onboarding state — steps, saved data and the consent text in force (RF-20, CU-26)
+      description: >
+        Lets the guest resume where they left off. `nextStep` is the first
+        pending step in the order PASSWORD, PERSONAL_DATA, DOCUMENTS, CONSENT
+        (RN-33); the documents step is optional (RN-37) but is still offered
+        once.
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # either guestType
+      responses:
+        "200":
+          description: Current onboarding state
+          content: { application/json: { schema: { $ref: "#/components/schemas/OnboardingState" } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /guest/onboarding/personal-data:
+    put:
+      operationId: savePersonalData
+      tags: [guest-onboarding]
+      summary: Save the personal data step (RF-20, CU-25)
+      description: >
+        Requires the password step to be done (RN-33). Only while the guest is
+        in onboarding; afterwards the data is edited through the profile endpoint.
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # either guestType
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/PersonalDataInput" } } }
+      responses:
+        "200":
+          description: Step saved
+          content: { application/json: { schema: { $ref: "#/components/schemas/OnboardingState" } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/OnboardingConflict" }
+
+  /guest/onboarding/documents:
+    post:
+      operationId: uploadOnboardingDocument
+      tags: [guest-onboarding]
+      summary: Upload one optional document (RN-37, RF-15, CU-25)
+      description: >
+        One file per call; repeat for more. At most 5 files per guest, each
+        JPG, PNG or PDF of up to 5 MB, checked by real content (SEC-07). The
+        guest never gets the file back: only the administrator sees it. Files
+        are neither deleted nor replaced.
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # either guestType
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary, description: "JPG/PNG/PDF, ≤5MB (RF-15)" }
+      responses:
+        "201":
+          description: Document stored
+          content: { application/json: { schema: { $ref: "#/components/schemas/GuestDocumentRef" } } }
+        "400":
+          description: "`DOCUMENT_INVALID_FILE` (type or size not allowed, RF-15)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: >
+            `DOCUMENT_LIMIT_REACHED` (the guest already has 5 files),
+            `ONBOARDING_STEP_OUT_OF_ORDER` or `ONBOARDING_ALREADY_COMPLETED`
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /guest/onboarding/documents/done:
+    post:
+      operationId: finishDocumentsStep
+      tags: [guest-onboarding]
+      summary: Mark the documents step as finished, with files or skipped (RN-37, CU-25)
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # either guestType
+      responses:
+        "200":
+          description: Step finished
+          content: { application/json: { schema: { $ref: "#/components/schemas/OnboardingState" } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/OnboardingConflict" }
+
+  /guest/onboarding/consent:
+    post:
+      operationId: acceptConsent
+      tags: [guest-onboarding]
+      summary: Accept the personal data consent — closes the onboarding (RF-14, RN-14, CU-11)
+      description: >
+        Records the acceptance with date, time and the text version. With the
+        password and personal data steps already done, the guest becomes
+        ACTIVE (RN-33, RN-36). Accepting before the personal data step answers
+        409 `ONBOARDING_STEP_OUT_OF_ORDER`.
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # either guestType
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ConsentInput" } } }
+      responses:
+        "200":
+          description: "Consent recorded; the state shows `status` ACTIVE when the onboarding is complete"
+          content: { application/json: { schema: { $ref: "#/components/schemas/OnboardingState" } } }
+        "400":
+          description: >
+            `CONSENT_NOT_ACCEPTED` (`accepted` is not true) or
+            `VALIDATION_ERROR` with `field: consentVersion` if it is not the
+            version in force
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/OnboardingConflict" }
 
   # ───────────────────────── TEMPORARY GUEST (RF-04, RF-06, CU-21, CU-22) ─────────────────────────
   /temporary-guest/payment-status:
@@ -878,6 +1134,7 @@ paths:
           description: Stay payment status
           content: { application/json: { schema: { $ref: "#/components/schemas/PeriodStatus" } } }
         "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/OnboardingRequired" }
 
   /temporary-guest/payments:
     post:
@@ -905,6 +1162,7 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/Payment" } } }
         "400": { description: "Invalid file (RF-15)" }
         "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/OnboardingRequired" }
         "409": { description: "A voucher already exists for this stay, pending or approved (RN-03, RN-15)" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
@@ -912,23 +1170,20 @@ paths:
     patch:
       operationId: updateOwnProfileTemporary
       tags: [temporary-guest]
-      summary: Edit own contact data (CU-23)
+      summary: Edit own personal and contact data (CU-23, RN-17)
       security: [{ cookieAuth: [] }]
       x-roles: [GUEST] # guestType TEMPORARY
       requestBody:
         content:
           application/json:
-            schema:
-              type: object
-              properties:
-                phone: { type: string }
-                contactEmail: { type: string, format: email }
+            schema: { $ref: "#/components/schemas/ProfileUpdateInput" }
       responses:
         "200":
           description: Profile updated
           content: { application/json: { schema: { $ref: "#/components/schemas/GuestSummary" } } }
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/OnboardingRequired" }
 
 components:
   securitySchemes:
@@ -1017,6 +1272,41 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
+    GuestInactive:
+      description: >
+        The guest is inactive (RN-12, RN-18). The `code` is always
+        `GUEST_INACTIVE` and `guestId` lets the administrator reactivate it
+        right from the notice (`POST /admin/guests/{id}/reactivate`, CU-28)
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [code, message, guestId]
+            properties:
+              code: { type: string, enum: [GUEST_INACTIVE] }
+              message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+              guestId: { type: string, format: uuid }
+    OnboardingRequired:
+      description: >
+        The guest has not completed the onboarding (RN-33). The `code` is
+        always `AUTH_ONBOARDING_REQUIRED`; the client redirects to the first
+        pending step (`nextStep` of `GET /guest/onboarding`)
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [code, message]
+            properties:
+              code: { type: string, enum: [AUTH_ONBOARDING_REQUIRED] }
+              message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+    OnboardingConflict:
+      description: >
+        `ONBOARDING_STEP_OUT_OF_ORDER` (a step was attempted before its
+        predecessor, RN-33) or `ONBOARDING_ALREADY_COMPLETED` (the guest is
+        already active: use the profile endpoint)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
 
   schemas:
     Error:
@@ -1046,21 +1336,66 @@ components:
         type: { type: string, enum: [ROOM, CABIN] }
         status: { type: string, enum: [ACTIVE, INACTIVE] }
 
+    SessionInfo:
+      type: object
+      description: >
+        Session data answered by login, link activation and `GET /auth/me`.
+        `name` is the guest's name; while the guest has not completed the
+        personal data step it is the document in text (for example
+        "DNI 12345678") so the field is always there.
+      required: [role, name, mustChangePassword]
+      properties:
+        role: { type: string, enum: [ADMIN, GUEST] }
+        guestType: { type: string, enum: [CONTRACT, TEMPORARY], nullable: true, description: "only when role is GUEST" }
+        name: { type: string }
+        mustChangePassword: { type: boolean, description: "true on first login with a temporary password, until the guest changes it (RF-12)" }
+        guestStatus: { type: string, enum: [ONBOARDING, ACTIVE], nullable: true, description: "only when role is GUEST" }
+        nextOnboardingStep: { type: string, enum: [PASSWORD, PERSONAL_DATA, DOCUMENTS, CONSENT], nullable: true, description: "first pending onboarding step; null when the guest is active or the role is ADMIN (RN-33)" }
+
+    GuestStatus:
+      type: string
+      enum: [PENDING_ACTIVATION, ONBOARDING, ACTIVE, INACTIVE]
+      description: "Guest lifecycle (RN-36). Inactive is reversible (RN-12)"
+
+    AccessMode:
+      type: string
+      enum: [LINK, TEMPORARY_PASSWORD]
+      description: "How the administrator delivers the access: an activation link or a temporary password (RN-32)"
+
+    AccessGrant:
+      type: object
+      description: >
+        An access generated by the administrator. Valid 30 minutes and single
+        use (RN-32). The secret (`activationUrl` or `temporaryPassword`) is
+        given only here, in clear, and cannot be read again.
+      required: [mode, expiresAt, emailSent, shareMessage]
+      properties:
+        mode: { $ref: "#/components/schemas/AccessMode" }
+        activationUrl: { type: string, description: "Only when mode is LINK" }
+        temporaryPassword: { type: string, description: "Only when mode is TEMPORARY_PASSWORD" }
+        expiresAt: { type: string, format: date-time }
+        emailSent: { type: boolean, description: "true if the access was sent to the guest's email (best-effort, RN-19)" }
+        shareMessage: { type: string, description: "Spanish text ready to copy or to send by WhatsApp, with the link or the password and the 30-minute notice" }
+
     GuestInput:
       type: object
-      required: [documentType, documentNumber, name, type, dataConsent]
+      description: Minimal registration by the administrator (RN-31)
+      required: [documentType, documentNumber, type, accessMode]
       properties:
         documentType: { $ref: "#/components/schemas/DocumentType" }
-        documentNumber: { type: string }
-        name: { type: string }
-        phone: { type: string }
-        contactEmail: { type: string, format: email }
+        documentNumber: { type: string, minLength: 1, maxLength: 20 }
         type: { type: string, enum: [CONTRACT, TEMPORARY] }
-        dataConsent: { type: boolean, description: "Must be true (RN-14)" }
-        stayStartDate: { type: string, format: date, description: "Only when type=TEMPORARY" }
-        stayEndDate: { type: string, format: date, description: "Only when type=TEMPORARY" }
-        agreedAmount: { type: number, description: "Only when type=TEMPORARY" }
-        emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
+        phone: { type: string, maxLength: 30, description: "Optional, to notify the guest" }
+        contactEmail: { type: string, format: email, maxLength: 200, description: "Optional: if present the link is also sent by email (RN-19)" }
+        accessMode: { $ref: "#/components/schemas/AccessMode" }
+
+    CreateGuestResult:
+      type: object
+      required: [guest, alreadyRegistered]
+      properties:
+        guest: { $ref: "#/components/schemas/GuestSummary" }
+        alreadyRegistered: { type: boolean, description: "true when the document already existed: the guest is returned unmodified (RN-18)" }
+        access: { $ref: "#/components/schemas/AccessGrant" }
 
     EmergencyContact:
       type: object
@@ -1073,40 +1408,131 @@ components:
     GuestUpdateInput:
       type: object
       description: >
-        Editable subset of GuestInput. documentType/documentNumber (RN-18
-        identity key) and dataConsent (RN-14, captured once at creation)
-        are immutable after creation — not included here.
+        What the administrator may change: the document, only while the guest
+        is pending activation (RN-36), and the stay data of a temporary guest.
+        Personal and contact data are the guest's alone (RN-17).
       properties:
-        name: { type: string }
-        phone: { type: string }
-        contactEmail: { type: string, format: email }
+        documentType: { $ref: "#/components/schemas/DocumentType" }
+        documentNumber: { type: string, minLength: 1, maxLength: 20 }
         stayStartDate: { type: string, format: date, description: "Only when guest type=TEMPORARY" }
         stayEndDate: { type: string, format: date, description: "Only when guest type=TEMPORARY" }
         agreedAmount: { type: number, description: "Only when guest type=TEMPORARY" }
+
+    PersonalDataInput:
+      type: object
+      description: Personal data step of the onboarding (RN-33)
+      required: [name, phone]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        phone: { type: string, minLength: 1, maxLength: 30 }
+        contactEmail: { type: string, format: email, maxLength: 200, description: "Optional; without it the password can only be recovered through the administrator (RF-16, RF-17)" }
         emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
+
+    ProfileUpdateInput:
+      type: object
+      description: The guest edits their own data; every field is optional (RN-17)
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        phone: { type: string, minLength: 1, maxLength: 30 }
+        contactEmail: { type: string, format: email, maxLength: 200 }
+        emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
+
+    ConsentInput:
+      type: object
+      required: [accepted, consentVersion]
+      properties:
+        accepted: { type: boolean, description: "Must be true (RN-14)" }
+        consentVersion: { type: string, description: "Version of the text being accepted; must be the one in `OnboardingState.consent.version`" }
 
     GuestSummary:
       type: object
-      required: [id, documentType, documentNumber, name, type, status, hasLoginAccess]
+      required: [id, documentType, documentNumber, type, status, hasLoginAccess]
       properties:
         id: { type: string, format: uuid }
         documentType: { $ref: "#/components/schemas/DocumentType" }
         documentNumber: { type: string }
-        name: { type: string }
+        name: { type: string, nullable: true, description: "null until the guest completes the personal data step" }
         type: { type: string, enum: [CONTRACT, TEMPORARY] }
-        status: { type: string, enum: [ACTIVE, INACTIVE] }
+        status: { $ref: "#/components/schemas/GuestStatus" }
         hasLoginAccess: { type: boolean }
+
+    OnboardingProgress:
+      type: object
+      required: [passwordSet, personalDataCompleted, documentsStepCompleted, consentAccepted]
+      properties:
+        passwordSet: { type: boolean }
+        personalDataCompleted: { type: boolean }
+        documentsStepCompleted: { type: boolean, description: "uploaded files or skipped; optional step (RN-37)" }
+        consentAccepted: { type: boolean }
 
     GuestDetail:
       allOf:
         - $ref: "#/components/schemas/GuestSummary"
         - type: object
-          required: [paymentHistory]
+          required: [onboarding, documentCount, paymentHistory]
           properties:
+            phone: { type: string, nullable: true }
+            contactEmail: { type: string, nullable: true }
+            emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
+            stayStartDate: { type: string, format: date, description: "Only when type=TEMPORARY" }
+            stayEndDate: { type: string, format: date, description: "Only when type=TEMPORARY" }
+            agreedAmount: { type: number, description: "Only when type=TEMPORARY" }
+            onboarding: { $ref: "#/components/schemas/OnboardingProgress" }
+            documentCount: { type: integer, minimum: 0, maximum: 5 }
+            accessExpiresAt: { type: string, format: date-time, nullable: true, description: "Expiry of the current unused access, if there is one" }
             contract: { $ref: "#/components/schemas/Contract" }
             paymentHistory:
               type: array
               items: { $ref: "#/components/schemas/Payment" }
+
+    GuestDocumentRef:
+      type: object
+      description: "A document as the guest sees it, without a link: only the administrator can open the file (RN-37)"
+      required: [id, originalName, contentType, sizeBytes, uploadedAt]
+      properties:
+        id: { type: string, format: uuid }
+        originalName: { type: string }
+        contentType: { type: string, enum: [image/jpeg, image/png, application/pdf] }
+        sizeBytes: { type: integer, minimum: 1, maximum: 5242880 }
+        uploadedAt: { type: string, format: date-time }
+
+    GuestDocument:
+      allOf:
+        - $ref: "#/components/schemas/GuestDocumentRef"
+        - type: object
+          required: [url, urlExpiresAt]
+          properties:
+            url: { type: string, description: "R2 signed URL, expires 5 minutes after the response (RN-37)" }
+            urlExpiresAt: { type: string, format: date-time }
+
+    OnboardingStepState:
+      type: object
+      required: [step, required, completed]
+      properties:
+        step: { type: string, enum: [PASSWORD, PERSONAL_DATA, DOCUMENTS, CONSENT] }
+        required: { type: boolean, description: "false only for DOCUMENTS (RN-37)" }
+        completed: { type: boolean }
+
+    OnboardingState:
+      type: object
+      required: [status, nextStep, steps, documents, consent]
+      properties:
+        status: { type: string, enum: [ONBOARDING, ACTIVE] }
+        nextStep: { type: string, enum: [PASSWORD, PERSONAL_DATA, DOCUMENTS, CONSENT], nullable: true, description: "null when the onboarding is complete" }
+        steps:
+          type: array
+          items: { $ref: "#/components/schemas/OnboardingStepState" }
+        personalData: { $ref: "#/components/schemas/PersonalDataInput" }
+        documents:
+          type: array
+          items: { $ref: "#/components/schemas/GuestDocumentRef" }
+        consent:
+          type: object
+          required: [version, text, accepted]
+          properties:
+            version: { type: string }
+            text: { type: string, description: "Consent text in force, in Spanish" }
+            accepted: { type: boolean }
 
     Contract:
       type: object
