@@ -1503,9 +1503,22 @@ components:
       description: Answer of a registration that created the guest; it always carries the first access
       required: [guest, alreadyRegistered, access]
       properties:
-        guest: { $ref: "#/components/schemas/GuestSummary" }
+        guest: { $ref: "#/components/schemas/PendingGuestSummary" }
         alreadyRegistered: { type: boolean, enum: [false] }
         access: { $ref: "#/components/schemas/AccessGrant" }
+
+    PendingGuestSummary:
+      type: object
+      description: "A guest just created by the administrator: always pending activation (RN-36) and still without a name (RN-31)"
+      required: [id, documentType, documentNumber, name, type, status, hasLoginAccess]
+      properties:
+        id: { type: string, format: uuid }
+        documentType: { $ref: "#/components/schemas/DocumentType" }
+        documentNumber: { type: string }
+        name: { type: string, nullable: true, description: "null until the guest completes the personal data step" }
+        type: { type: string, enum: [CONTRACT, TEMPORARY] }
+        status: { type: string, enum: [PENDING_ACTIVATION] }
+        hasLoginAccess: { type: boolean }
 
     GuestAlreadyRegistered:
       type: object
@@ -1638,18 +1651,35 @@ components:
       oneOf:
         - $ref: "#/components/schemas/OnboardingInProgress"
         - $ref: "#/components/schemas/OnboardingCompleted"
-      discriminator:
-        propertyName: status
-        mapping:
-          ONBOARDING: "#/components/schemas/OnboardingInProgress"
-          ACTIVE: "#/components/schemas/OnboardingCompleted"
 
     OnboardingInProgress:
+      description: >
+        Onboarding still open. Before the personal data step is saved the data
+        is not there yet; from the documents step on it is always returned.
+      oneOf:
+        - $ref: "#/components/schemas/OnboardingPersonalDataPending"
+        - $ref: "#/components/schemas/OnboardingPersonalDataSaved"
+
+    OnboardingPersonalDataPending:
       type: object
       required: [status, nextStep, steps, documents, consent]
       properties:
         status: { type: string, enum: [ONBOARDING] }
-        nextStep: { type: string, enum: [PASSWORD, PERSONAL_DATA, DOCUMENTS, CONSENT], description: "First pending step, in the order of RN-33" }
+        nextStep: { type: string, enum: [PASSWORD, PERSONAL_DATA], description: "First pending step, in the order of RN-33" }
+        steps:
+          type: array
+          items: { $ref: "#/components/schemas/OnboardingStepState" }
+        documents:
+          type: array
+          items: { $ref: "#/components/schemas/GuestDocumentRef" }
+        consent: { $ref: "#/components/schemas/ConsentState" }
+
+    OnboardingPersonalDataSaved:
+      type: object
+      required: [status, nextStep, steps, personalData, documents, consent]
+      properties:
+        status: { type: string, enum: [ONBOARDING] }
+        nextStep: { type: string, enum: [DOCUMENTS, CONSENT], description: "First pending step, in the order of RN-33" }
         steps:
           type: array
           items: { $ref: "#/components/schemas/OnboardingStepState" }
