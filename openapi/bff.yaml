@@ -568,7 +568,7 @@ paths:
             Cache-Control: { required: true, schema: { type: string, enum: ["no-store"] } }
           content:
             application/json:
-              schema: { type: array, items: { $ref: "#/components/schemas/GuestDocument" } }
+              schema: { type: array, maxItems: 5, items: { $ref: "#/components/schemas/GuestDocument" } }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -1654,15 +1654,9 @@ components:
       oneOf:
         - $ref: "#/components/schemas/PendingGuestDetail"
         - $ref: "#/components/schemas/OnboardingGuestDetail"
+        - $ref: "#/components/schemas/OnboardingPersonalDataSavedGuestDetail"
         - $ref: "#/components/schemas/ActiveGuestDetail"
         - $ref: "#/components/schemas/InactiveGuestDetail"
-      discriminator:
-        propertyName: status
-        mapping:
-          PENDING_ACTIVATION: "#/components/schemas/PendingGuestDetail"
-          ONBOARDING: "#/components/schemas/OnboardingGuestDetail"
-          ACTIVE: "#/components/schemas/ActiveGuestDetail"
-          INACTIVE: "#/components/schemas/InactiveGuestDetail"
 
     PendingGuestDetail:
       allOf:
@@ -1674,22 +1668,38 @@ components:
             onboardingProgress: { type: string, enum: [NOT_STARTED] }
 
     OnboardingGuestDetail:
+      description: "Onboarding guest whose personal data is not saved yet (the name and phone may be missing)"
       allOf:
         - $ref: "#/components/schemas/GuestDetailBase"
         - type: object
           required: [status, onboardingProgress]
           properties:
             status: { type: string, enum: [ONBOARDING] }
-            onboardingProgress: { type: string, enum: [NOT_STARTED, PASSWORD_SET, PERSONAL_DATA_SAVED, DOCUMENTS_DONE] }
+            onboardingProgress: { type: string, enum: [NOT_STARTED, PASSWORD_SET] }
 
-    ActiveGuestDetail:
+    OnboardingPersonalDataSavedGuestDetail:
+      description: "Onboarding guest whose personal data is saved, so the name and phone are always there (RN-33)"
       allOf:
         - $ref: "#/components/schemas/GuestDetailBase"
         - type: object
-          required: [status, onboardingProgress]
+          required: [status, onboardingProgress, name, phone]
+          properties:
+            status: { type: string, enum: [ONBOARDING] }
+            onboardingProgress: { type: string, enum: [PERSONAL_DATA_SAVED, DOCUMENTS_DONE] }
+            name: { type: string }
+            phone: { type: string }
+
+    ActiveGuestDetail:
+      description: "Active guest, so the onboarding is complete and the name and phone are always there (RN-33, RN-36)"
+      allOf:
+        - $ref: "#/components/schemas/GuestDetailBase"
+        - type: object
+          required: [status, onboardingProgress, name, phone]
           properties:
             status: { type: string, enum: [ACTIVE] }
             onboardingProgress: { type: string, enum: [COMPLETED] }
+            name: { type: string }
+            phone: { type: string }
 
     InactiveGuestDetail:
       allOf:
@@ -1746,6 +1756,7 @@ components:
         nextStep: { type: string, enum: [PERSONAL_DATA], description: "The password step is already done: a guest that still must change its temporary password cannot reach the onboarding operations (RF-12)" }
         documents:
           type: array
+          maxItems: 5
           items: { $ref: "#/components/schemas/GuestDocumentRef" }
         consent: { $ref: "#/components/schemas/PendingConsentState" }
 
@@ -1759,6 +1770,7 @@ components:
         personalData: { $ref: "#/components/schemas/PersonalDataInput" }
         documents:
           type: array
+          maxItems: 5
           items: { $ref: "#/components/schemas/GuestDocumentRef" }
         consent: { $ref: "#/components/schemas/PendingConsentState" }
 
@@ -1772,6 +1784,7 @@ components:
         personalData: { $ref: "#/components/schemas/PersonalDataInput" }
         documents:
           type: array
+          maxItems: 5
           items: { $ref: "#/components/schemas/GuestDocumentRef" }
         consent: { $ref: "#/components/schemas/PendingConsentState" }
 
@@ -1783,6 +1796,7 @@ components:
         personalData: { $ref: "#/components/schemas/PersonalDataInput" }
         documents:
           type: array
+          maxItems: 5
           items: { $ref: "#/components/schemas/GuestDocumentRef" }
         consent: { $ref: "#/components/schemas/AcceptedConsentState" }
 
