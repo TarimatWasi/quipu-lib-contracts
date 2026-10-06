@@ -402,7 +402,8 @@ paths:
         completes everything else in the onboarding (RF-20). The guest is
         created pending activation and the response carries the first access
         (link or temporary password, valid 30 minutes, RN-32). If an email was
-        given, the link is also sent by email, best-effort. If the document is
+        given, the access is also sent to it by email, best-effort: the activation
+        link in LINK mode, the temporary password itself in TEMPORARY_PASSWORD mode. If the document is
         already registered nothing is created or modified: the existing guest
         comes back with `alreadyRegistered: true` and a 200 (RN-18).
         The response is never cacheable (`Cache-Control: no-store`) because it
@@ -1484,7 +1485,7 @@ components:
         mode: { type: string, enum: [LINK] }
         activationUrl: { type: string, description: "Single-use activation link (RN-32)" }
         expiresAt: { type: string, format: date-time }
-        emailSent: { type: boolean, description: "true if the access was sent to the guest's email (best-effort, RN-19)" }
+        emailSent: { type: boolean, description: "true if the access (the link, or the temporary password) was sent to the guest's email (best-effort, RN-19)" }
         shareMessage: { type: string, description: "Spanish text ready to copy or to send by WhatsApp, with the link and the 30-minute notice" }
 
     PasswordAccessGrant:
@@ -1494,7 +1495,7 @@ components:
         mode: { type: string, enum: [TEMPORARY_PASSWORD] }
         temporaryPassword: { type: string, description: "Temporary password, valid 30 minutes (RN-32)" }
         expiresAt: { type: string, format: date-time }
-        emailSent: { type: boolean, description: "true if the access was sent to the guest's email (best-effort, RN-19)" }
+        emailSent: { type: boolean, description: "true if the access (the link, or the temporary password) was sent to the guest's email (best-effort, RN-19)" }
         shareMessage: { type: string, description: "Spanish text ready to copy or to send by WhatsApp, with the password and the 30-minute notice" }
 
     GuestInput:
@@ -1506,7 +1507,7 @@ components:
         documentNumber: { type: string, minLength: 1, maxLength: 20 }
         type: { type: string, enum: [CONTRACT, TEMPORARY] }
         phone: { type: string, maxLength: 30, description: "Optional, to notify the guest" }
-        contactEmail: { type: string, format: email, maxLength: 200, description: "Optional: if present the link is also sent by email (RN-19)" }
+        contactEmail: { type: string, format: email, maxLength: 200, description: "Optional: if present the access (the link or the temporary password, depending on accessMode) is also sent by email (RN-19)" }
         accessMode: { $ref: "#/components/schemas/AccessMode" }
 
     GuestCreated:
@@ -1686,7 +1687,7 @@ components:
         documents:
           type: array
           items: { $ref: "#/components/schemas/GuestDocumentRef" }
-        consent: { $ref: "#/components/schemas/ConsentState" }
+        consent: { $ref: "#/components/schemas/PendingConsentState" }
 
     OnboardingDocumentsPending:
       type: object
@@ -1699,7 +1700,7 @@ components:
         documents:
           type: array
           items: { $ref: "#/components/schemas/GuestDocumentRef" }
-        consent: { $ref: "#/components/schemas/ConsentState" }
+        consent: { $ref: "#/components/schemas/PendingConsentState" }
 
     OnboardingConsentPending:
       type: object
@@ -1712,7 +1713,7 @@ components:
         documents:
           type: array
           items: { $ref: "#/components/schemas/GuestDocumentRef" }
-        consent: { $ref: "#/components/schemas/ConsentState" }
+        consent: { $ref: "#/components/schemas/PendingConsentState" }
 
     OnboardingCompleted:
       type: object
@@ -1723,15 +1724,25 @@ components:
         documents:
           type: array
           items: { $ref: "#/components/schemas/GuestDocumentRef" }
-        consent: { $ref: "#/components/schemas/ConsentState" }
+        consent: { $ref: "#/components/schemas/AcceptedConsentState" }
 
-    ConsentState:
+    PendingConsentState:
       type: object
+      description: The consent in force, not yet accepted (the guest is still in onboarding)
       required: [version, text, accepted]
       properties:
         version: { type: string }
         text: { type: string, description: "Consent text in force, in Spanish" }
-        accepted: { type: boolean }
+        accepted: { type: boolean, enum: [false] }
+
+    AcceptedConsentState:
+      type: object
+      description: The consent the guest accepted, which is what completes the onboarding (RN-14, RN-36)
+      required: [version, text, accepted]
+      properties:
+        version: { type: string }
+        text: { type: string, description: "Consent text that was accepted, in Spanish" }
+        accepted: { type: boolean, enum: [true] }
 
     Contract:
       type: object
