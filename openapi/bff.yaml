@@ -1337,20 +1337,47 @@ components:
         status: { type: string, enum: [ACTIVE, INACTIVE] }
 
     SessionInfo:
-      type: object
       description: >
-        Session data answered by login, link activation and `GET /auth/me`.
-        `name` is the guest's name; while the guest has not completed the
-        personal data step it is the document in text (for example
-        "DNI 12345678") so the field is always there.
+        Session data answered by login, link activation and `GET /auth/me`,
+        in one of three shapes: the administrator, a guest still in onboarding
+        (with the step to go to) or an active guest. `name` is the guest's name;
+        while the guest has not completed the personal data step it is the
+        document in text (for example "DNI 12345678") so the field is always there.
+      oneOf:
+        - $ref: "#/components/schemas/AdminSession"
+        - $ref: "#/components/schemas/GuestOnboardingSession"
+        - $ref: "#/components/schemas/GuestActiveSession"
+
+    AdminSession:
+      type: object
+      required: [role, name, mustChangePassword]
+      properties:
+        role: { type: string, enum: [ADMIN] }
+        name: { type: string }
+        mustChangePassword: { type: boolean, description: "true until the administrator changes a temporary password (RF-12)" }
+
+    GuestOnboardingSession:
+      type: object
+      description: A guest whose onboarding is incomplete (RN-33)
       required: [role, guestType, name, mustChangePassword, guestStatus, nextOnboardingStep]
       properties:
-        role: { type: string, enum: [ADMIN, GUEST] }
-        guestType: { type: string, enum: [CONTRACT, TEMPORARY], nullable: true, description: "null when role is ADMIN" }
+        role: { type: string, enum: [GUEST] }
+        guestType: { type: string, enum: [CONTRACT, TEMPORARY] }
         name: { type: string }
         mustChangePassword: { type: boolean, description: "true on first login with a temporary password, until the guest changes it (RF-12)" }
-        guestStatus: { type: string, enum: [ONBOARDING, ACTIVE], nullable: true, description: "null when role is ADMIN" }
-        nextOnboardingStep: { type: string, enum: [PASSWORD, PERSONAL_DATA, DOCUMENTS, CONSENT], nullable: true, description: "first pending onboarding step; null when the guest is active or the role is ADMIN (RN-33)" }
+        guestStatus: { type: string, enum: [ONBOARDING] }
+        nextOnboardingStep: { type: string, enum: [PASSWORD, PERSONAL_DATA, DOCUMENTS, CONSENT], description: "First pending step, in the order of RN-33" }
+
+    GuestActiveSession:
+      type: object
+      description: A guest that completed the onboarding (RN-36)
+      required: [role, guestType, name, mustChangePassword, guestStatus]
+      properties:
+        role: { type: string, enum: [GUEST] }
+        guestType: { type: string, enum: [CONTRACT, TEMPORARY] }
+        name: { type: string }
+        mustChangePassword: { type: boolean, description: "true while a temporary password has not been changed (RF-12)" }
+        guestStatus: { type: string, enum: [ACTIVE] }
 
     GuestStatus:
       type: string
