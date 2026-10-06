@@ -1343,13 +1343,13 @@ components:
         `name` is the guest's name; while the guest has not completed the
         personal data step it is the document in text (for example
         "DNI 12345678") so the field is always there.
-      required: [role, name, mustChangePassword]
+      required: [role, guestType, name, mustChangePassword, guestStatus, nextOnboardingStep]
       properties:
         role: { type: string, enum: [ADMIN, GUEST] }
-        guestType: { type: string, enum: [CONTRACT, TEMPORARY], nullable: true, description: "only when role is GUEST" }
+        guestType: { type: string, enum: [CONTRACT, TEMPORARY], nullable: true, description: "null when role is ADMIN" }
         name: { type: string }
         mustChangePassword: { type: boolean, description: "true on first login with a temporary password, until the guest changes it (RF-12)" }
-        guestStatus: { type: string, enum: [ONBOARDING, ACTIVE], nullable: true, description: "only when role is GUEST" }
+        guestStatus: { type: string, enum: [ONBOARDING, ACTIVE], nullable: true, description: "null when role is ADMIN" }
         nextOnboardingStep: { type: string, enum: [PASSWORD, PERSONAL_DATA, DOCUMENTS, CONSENT], nullable: true, description: "first pending onboarding step; null when the guest is active or the role is ADMIN (RN-33)" }
 
     GuestStatus:
@@ -1475,7 +1475,7 @@ components:
 
     GuestSummary:
       type: object
-      required: [id, documentType, documentNumber, type, status, hasLoginAccess]
+      required: [id, documentType, documentNumber, name, type, status, hasLoginAccess]
       properties:
         id: { type: string, format: uuid }
         documentType: { $ref: "#/components/schemas/DocumentType" }
