@@ -392,6 +392,7 @@ paths:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/GuestSummary" } }
         "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
     post:
       operationId: createGuest
       tags: [admin-guests]
@@ -446,6 +447,7 @@ paths:
           description: Consolidated guest view
           content: { application/json: { schema: { $ref: "#/components/schemas/GuestDetail" } } }
         "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
       operationId: updateGuest
@@ -488,6 +490,7 @@ paths:
       responses:
         "204": { description: Guest deactivated }
         "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /admin/guests/{id}/reactivate:
@@ -586,6 +589,7 @@ paths:
           description: Payment history for the given guest
           content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Payment" } } } }
         "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   # ───────────────────────── ADMIN: CONTRACTS (RF-03, RF-09, CU-03, CU-07, CU-12) ─────────────────────────
