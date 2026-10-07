@@ -1281,15 +1281,23 @@ components:
       description: >
         Account temporarily locked after 5 consecutive failed logins (SEG-06): the lock lasts
         15 minutes, expires by itself and is lifted by a password reset (RF-16). The `code` is
-        always `AUTH_ACCOUNT_LOCKED`
+        always `AUTH_ACCOUNT_LOCKED`. The `Retry-After` header gives the seconds left, which is
+        what the client counts down from (so a wrong clock on the device cannot skew it), and
+        `lockedUntil` the instant the lock ends, to show the time of day
+      headers:
+        Retry-After:
+          description: Seconds until the account can try again, rounded up (at least 1)
+          required: true
+          schema: { type: integer, minimum: 1 }
       content:
         application/json:
           schema:
             type: object
-            required: [code, message]
+            required: [code, message, lockedUntil]
             properties:
               code: { type: string, enum: [AUTH_ACCOUNT_LOCKED] }
               message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+              lockedUntil: { type: string, format: date-time, description: "UTC instant at which the lock ends; the UI shows it in America/Lima" }
     TooManyRequests:
       description: "Rate limit exceeded (SEC-01) — retry after the window in the `Retry-After` header"
       content:
