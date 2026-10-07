@@ -1621,10 +1621,22 @@ components:
         skipped, then the consent accepted (COMPLETED, which is what an ACTIVE
         guest always has). One value, so impossible combinations cannot be expressed.
 
-    GuestDetailBase:
+    GuestDetail:
+      description: >
+        Guest 360 detail. `status` and `onboardingProgress` go together
+        (RN-33, RN-36): pending activation has not started, an onboarding
+        guest is anywhere before the consent, an active guest is always
+        COMPLETED and an inactive one keeps the progress it had.
+      oneOf:
+        - $ref: "#/components/schemas/PendingGuestDetail"
+        - $ref: "#/components/schemas/OnboardingGuestDetail"
+        - $ref: "#/components/schemas/OnboardingPersonalDataSavedGuestDetail"
+        - $ref: "#/components/schemas/ActiveGuestDetail"
+        - $ref: "#/components/schemas/InactiveGuestDetail"
+
+    PendingGuestDetail:
       type: object
-      description: Fields every guest detail carries, whatever its lifecycle state
-      required: [id, documentType, documentNumber, name, type, hasLoginAccess, documentCount, paymentHistory]
+      required: [id, documentType, documentNumber, name, type, hasLoginAccess, documentCount, paymentHistory, status, onboardingProgress]
       properties:
         id: { type: string, format: uuid }
         documentType: { $ref: "#/components/schemas/DocumentType" }
@@ -1644,71 +1656,111 @@ components:
         paymentHistory:
           type: array
           items: { $ref: "#/components/schemas/Payment" }
-
-    GuestDetail:
-      description: >
-        Guest 360 detail. `status` and `onboardingProgress` go together
-        (RN-33, RN-36): pending activation has not started, an onboarding
-        guest is anywhere before the consent, an active guest is always
-        COMPLETED and an inactive one keeps the progress it had.
-      oneOf:
-        - $ref: "#/components/schemas/PendingGuestDetail"
-        - $ref: "#/components/schemas/OnboardingGuestDetail"
-        - $ref: "#/components/schemas/OnboardingPersonalDataSavedGuestDetail"
-        - $ref: "#/components/schemas/ActiveGuestDetail"
-        - $ref: "#/components/schemas/InactiveGuestDetail"
-
-    PendingGuestDetail:
-      allOf:
-        - $ref: "#/components/schemas/GuestDetailBase"
-        - type: object
-          required: [status, onboardingProgress]
-          properties:
-            status: { type: string, enum: [PENDING_ACTIVATION] }
-            onboardingProgress: { type: string, enum: [NOT_STARTED] }
+        status: { type: string, enum: [PENDING_ACTIVATION] }
+        onboardingProgress: { type: string, enum: [NOT_STARTED] }
 
     OnboardingGuestDetail:
+      type: object
       description: "Onboarding guest whose personal data is not saved yet (the name and phone may be missing)"
-      allOf:
-        - $ref: "#/components/schemas/GuestDetailBase"
-        - type: object
-          required: [status, onboardingProgress]
-          properties:
-            status: { type: string, enum: [ONBOARDING] }
-            onboardingProgress: { type: string, enum: [NOT_STARTED, PASSWORD_SET] }
+      required: [id, documentType, documentNumber, name, type, hasLoginAccess, documentCount, paymentHistory, status, onboardingProgress]
+      properties:
+        id: { type: string, format: uuid }
+        documentType: { $ref: "#/components/schemas/DocumentType" }
+        documentNumber: { type: string }
+        name: { type: string, nullable: true, description: "null until the guest completes the personal data step" }
+        type: { type: string, enum: [CONTRACT, TEMPORARY] }
+        hasLoginAccess: { type: boolean }
+        phone: { type: string, nullable: true }
+        contactEmail: { type: string, nullable: true }
+        emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
+        stayStartDate: { type: string, format: date, description: "Only when type=TEMPORARY" }
+        stayEndDate: { type: string, format: date, description: "Only when type=TEMPORARY" }
+        agreedAmount: { type: number, description: "Only when type=TEMPORARY" }
+        documentCount: { type: integer, minimum: 0, maximum: 5 }
+        accessExpiresAt: { type: string, format: date-time, nullable: true, description: "Expiry of the current unused access, if there is one" }
+        contract: { $ref: "#/components/schemas/Contract" }
+        paymentHistory:
+          type: array
+          items: { $ref: "#/components/schemas/Payment" }
+        status: { type: string, enum: [ONBOARDING] }
+        onboardingProgress: { type: string, enum: [NOT_STARTED, PASSWORD_SET] }
 
     OnboardingPersonalDataSavedGuestDetail:
+      type: object
       description: "Onboarding guest whose personal data is saved, so the name and phone are always there (RN-33)"
-      allOf:
-        - $ref: "#/components/schemas/GuestDetailBase"
-        - type: object
-          required: [status, onboardingProgress, name, phone]
-          properties:
-            status: { type: string, enum: [ONBOARDING] }
-            onboardingProgress: { type: string, enum: [PERSONAL_DATA_SAVED, DOCUMENTS_DONE] }
-            name: { type: string }
-            phone: { type: string }
+      required: [id, documentType, documentNumber, name, type, hasLoginAccess, documentCount, paymentHistory, status, onboardingProgress, name, phone]
+      properties:
+        id: { type: string, format: uuid }
+        documentType: { $ref: "#/components/schemas/DocumentType" }
+        documentNumber: { type: string }
+        name: { type: string }
+        type: { type: string, enum: [CONTRACT, TEMPORARY] }
+        hasLoginAccess: { type: boolean }
+        phone: { type: string }
+        contactEmail: { type: string, nullable: true }
+        emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
+        stayStartDate: { type: string, format: date, description: "Only when type=TEMPORARY" }
+        stayEndDate: { type: string, format: date, description: "Only when type=TEMPORARY" }
+        agreedAmount: { type: number, description: "Only when type=TEMPORARY" }
+        documentCount: { type: integer, minimum: 0, maximum: 5 }
+        accessExpiresAt: { type: string, format: date-time, nullable: true, description: "Expiry of the current unused access, if there is one" }
+        contract: { $ref: "#/components/schemas/Contract" }
+        paymentHistory:
+          type: array
+          items: { $ref: "#/components/schemas/Payment" }
+        status: { type: string, enum: [ONBOARDING] }
+        onboardingProgress: { type: string, enum: [PERSONAL_DATA_SAVED, DOCUMENTS_DONE] }
 
     ActiveGuestDetail:
+      type: object
       description: "Active guest, so the onboarding is complete and the name and phone are always there (RN-33, RN-36)"
-      allOf:
-        - $ref: "#/components/schemas/GuestDetailBase"
-        - type: object
-          required: [status, onboardingProgress, name, phone]
-          properties:
-            status: { type: string, enum: [ACTIVE] }
-            onboardingProgress: { type: string, enum: [COMPLETED] }
-            name: { type: string }
-            phone: { type: string }
+      required: [id, documentType, documentNumber, name, type, hasLoginAccess, documentCount, paymentHistory, status, onboardingProgress, name, phone]
+      properties:
+        id: { type: string, format: uuid }
+        documentType: { $ref: "#/components/schemas/DocumentType" }
+        documentNumber: { type: string }
+        name: { type: string }
+        type: { type: string, enum: [CONTRACT, TEMPORARY] }
+        hasLoginAccess: { type: boolean }
+        phone: { type: string }
+        contactEmail: { type: string, nullable: true }
+        emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
+        stayStartDate: { type: string, format: date, description: "Only when type=TEMPORARY" }
+        stayEndDate: { type: string, format: date, description: "Only when type=TEMPORARY" }
+        agreedAmount: { type: number, description: "Only when type=TEMPORARY" }
+        documentCount: { type: integer, minimum: 0, maximum: 5 }
+        accessExpiresAt: { type: string, format: date-time, nullable: true, description: "Expiry of the current unused access, if there is one" }
+        contract: { $ref: "#/components/schemas/Contract" }
+        paymentHistory:
+          type: array
+          items: { $ref: "#/components/schemas/Payment" }
+        status: { type: string, enum: [ACTIVE] }
+        onboardingProgress: { type: string, enum: [COMPLETED] }
 
     InactiveGuestDetail:
-      allOf:
-        - $ref: "#/components/schemas/GuestDetailBase"
-        - type: object
-          required: [status, onboardingProgress]
-          properties:
-            status: { type: string, enum: [INACTIVE] }
-            onboardingProgress: { $ref: "#/components/schemas/OnboardingProgress" }
+      type: object
+      required: [id, documentType, documentNumber, name, type, hasLoginAccess, documentCount, paymentHistory, status, onboardingProgress]
+      properties:
+        id: { type: string, format: uuid }
+        documentType: { $ref: "#/components/schemas/DocumentType" }
+        documentNumber: { type: string }
+        name: { type: string, nullable: true, description: "null until the guest completes the personal data step" }
+        type: { type: string, enum: [CONTRACT, TEMPORARY] }
+        hasLoginAccess: { type: boolean }
+        phone: { type: string, nullable: true }
+        contactEmail: { type: string, nullable: true }
+        emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
+        stayStartDate: { type: string, format: date, description: "Only when type=TEMPORARY" }
+        stayEndDate: { type: string, format: date, description: "Only when type=TEMPORARY" }
+        agreedAmount: { type: number, description: "Only when type=TEMPORARY" }
+        documentCount: { type: integer, minimum: 0, maximum: 5 }
+        accessExpiresAt: { type: string, format: date-time, nullable: true, description: "Expiry of the current unused access, if there is one" }
+        contract: { $ref: "#/components/schemas/Contract" }
+        paymentHistory:
+          type: array
+          items: { $ref: "#/components/schemas/Payment" }
+        status: { type: string, enum: [INACTIVE] }
+        onboardingProgress: { $ref: "#/components/schemas/OnboardingProgress" }
 
     GuestDocumentRef:
       type: object
@@ -1722,13 +1774,17 @@ components:
         uploadedAt: { type: string, format: date-time }
 
     GuestDocument:
-      allOf:
-        - $ref: "#/components/schemas/GuestDocumentRef"
-        - type: object
-          required: [url, urlExpiresAt]
-          properties:
-            url: { type: string, description: "R2 signed URL, expires 5 minutes after the response (RN-37)" }
-            urlExpiresAt: { type: string, format: date-time }
+      type: object
+      description: "A document as the administrator sees it: with a short-lived signed link (RN-37)"
+      required: [id, originalName, contentType, sizeBytes, uploadedAt, url, urlExpiresAt]
+      properties:
+        id: { type: string, format: uuid }
+        originalName: { type: string }
+        contentType: { type: string, enum: [image/jpeg, image/png, application/pdf] }
+        sizeBytes: { type: integer, minimum: 1, maximum: 5242880 }
+        uploadedAt: { type: string, format: date-time }
+        url: { type: string, description: "R2 signed URL, expires 5 minutes after the response (RN-37)" }
+        urlExpiresAt: { type: string, format: date-time }
 
     OnboardingState:
       description: >
