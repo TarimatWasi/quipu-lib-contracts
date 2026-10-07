@@ -1688,7 +1688,7 @@ components:
     OnboardingPersonalDataSavedGuestDetail:
       type: object
       description: "Onboarding guest whose personal data is saved, so the name and phone are always there (RN-33)"
-      required: [id, documentType, documentNumber, name, type, hasLoginAccess, documentCount, paymentHistory, status, onboardingProgress, name, phone]
+      required: [id, documentType, documentNumber, name, type, hasLoginAccess, documentCount, paymentHistory, status, onboardingProgress, phone]
       properties:
         id: { type: string, format: uuid }
         documentType: { $ref: "#/components/schemas/DocumentType" }
@@ -1714,7 +1714,7 @@ components:
     ActiveGuestDetail:
       type: object
       description: "Active guest, so the onboarding is complete and the name and phone are always there (RN-33, RN-36)"
-      required: [id, documentType, documentNumber, name, type, hasLoginAccess, documentCount, paymentHistory, status, onboardingProgress, name, phone]
+      required: [id, documentType, documentNumber, name, type, hasLoginAccess, documentCount, paymentHistory, status, onboardingProgress, phone]
       properties:
         id: { type: string, format: uuid }
         documentType: { $ref: "#/components/schemas/DocumentType" }
