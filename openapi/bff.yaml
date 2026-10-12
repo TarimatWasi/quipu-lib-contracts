@@ -358,11 +358,7 @@ paths:
                       code: { type: string, enum: [ENVIRONMENT_CODE_TAKEN] }
                       message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
                       field: { type: string, enum: [code] }
-                  - type: object
-                    required: [code, message]
-                    properties:
-                      code: { type: string, enum: [CONCURRENT_MODIFICATION] }
-                      message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+                  - $ref: "#/components/schemas/ConcurrentModificationError"
 
   /admin/environments/{id}/deactivate:
     post:
@@ -508,7 +504,21 @@ paths:
             `ConcurrentModification` response)
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Error" }
+              schema:
+                anyOf:
+                  - type: object
+                    required: [code, message, field]
+                    properties:
+                      code: { type: string, enum: [GUEST_DOCUMENT_LOCKED] }
+                      message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+                      field: { type: string }
+                  - type: object
+                    required: [code, message, field]
+                    properties:
+                      code: { type: string, enum: [GUEST_DOCUMENT_TAKEN] }
+                      message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+                      field: { type: string }
+                  - $ref: "#/components/schemas/ConcurrentModificationError"
 
   /admin/guests/{id}/deactivate:
     post:
@@ -599,11 +609,7 @@ paths:
                       code: { type: string, enum: [GUEST_INACTIVE] }
                       message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
                       guestId: { type: string, format: uuid }
-                  - type: object
-                    required: [code, message]
-                    properties:
-                      code: { type: string, enum: [CONCURRENT_MODIFICATION] }
-                      message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+                  - $ref: "#/components/schemas/ConcurrentModificationError"
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /admin/guests/{id}/documents:
@@ -1341,7 +1347,7 @@ components:
         Applies to environments, guests and expenses
       content:
         application/json:
-          schema: { $ref: "#/components/schemas/Error" }
+          schema: { $ref: "#/components/schemas/ConcurrentModificationError" }
           example:
             code: CONCURRENT_MODIFICATION
             message: El registro cambió mientras lo editabas; vuelve a cargarlo e inténtalo de nuevo
@@ -1486,6 +1492,14 @@ components:
         code: { type: string, description: "Stable error code, e.g. VOUCHER_ALREADY_EXISTS" }
         message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
         field: { type: string, description: "Field name if this is a validation error" }
+
+    ConcurrentModificationError:
+      type: object
+      description: Optimistic-locking conflict (BE-SPR-DAT-13). The `code` is always `CONCURRENT_MODIFICATION`
+      required: [code, message]
+      properties:
+        code: { type: string, enum: [CONCURRENT_MODIFICATION] }
+        message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
 
     DocumentType:
       type: string
