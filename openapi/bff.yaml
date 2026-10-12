@@ -62,8 +62,8 @@ paths:
               required: [documentType, documentNumber, password]
               properties:
                 documentType: { $ref: "#/components/schemas/DocumentType" }
-                documentNumber: { type: string }
-                password: { type: string }
+                documentNumber: { type: string, maxLength: 20 }
+                password: { type: string, maxLength: 128 }
       responses:
         "200":
           description: "Session started — HttpOnly JWT cookie issued (SameSite=Lax; Secure)"
@@ -181,8 +181,8 @@ paths:
               type: object
               required: [newPassword]
               properties:
-                currentPassword: { type: string, description: "Optional when coming from the forced first-login flow" }
-                newPassword: { type: string, minLength: 8, description: "At most 72 bytes in UTF-8 (bcrypt limit)" }
+                currentPassword: { type: string, maxLength: 128, description: "Optional when coming from the forced first-login flow" }
+                newPassword: { type: string, minLength: 8, maxLength: 128, description: "At most 72 bytes in UTF-8 (bcrypt limit)" }
       responses:
         "204": { description: Password updated; Set-Cookie replaces the session }
         "400":
@@ -234,8 +234,8 @@ paths:
               type: object
               required: [code, newPassword]
               properties:
-                code: { type: string, description: "Single-use code from the link in the recovery email" }
-                newPassword: { type: string, minLength: 8, description: "At most 72 bytes in UTF-8 (bcrypt limit)" }
+                code: { type: string, maxLength: 100, description: "Single-use code from the link in the recovery email" }
+                newPassword: { type: string, minLength: 8, maxLength: 128, description: "At most 72 bytes in UTF-8 (bcrypt limit)" }
       responses:
         "204": { description: Password reset; the code can no longer be used }
         "400":
@@ -342,7 +342,23 @@ paths:
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { $ref: "#/components/responses/EnvironmentCodeTaken" }
+        "409":
+          description: >
+            `ENVIRONMENT_CODE_TAKEN` (another environment already has that
+            code, with `field: code`, RF-01) or `CONCURRENT_MODIFICATION` (the
+            record changed while it was being edited, see the
+            `ConcurrentModification` response)
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - type: object
+                    required: [code, message, field]
+                    properties:
+                      code: { type: string, enum: [ENVIRONMENT_CODE_TAKEN] }
+                      message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+                      field: { type: string, enum: [code] }
+                  - $ref: "#/components/schemas/ConcurrentModificationError"
 
   /admin/environments/{id}/deactivate:
     post:
@@ -357,6 +373,7 @@ paths:
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/ConcurrentModification" }
 
   /admin/environments/{id}/reactivate:
     post:
@@ -371,6 +388,7 @@ paths:
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/ConcurrentModification" }
 
   # ───────────────────────── ADMIN: GUESTS (RF-02, RF-13, RF-14, RF-17, CU-02, CU-06, CU-10, CU-11, CU-13) ─────────────────────────
   /admin/guests:
@@ -481,10 +499,26 @@ paths:
             `GUEST_DOCUMENT_LOCKED` (the document can only be corrected while
             the guest is pending activation, RN-36) or `GUEST_DOCUMENT_TAKEN`
             (the corrected document already belongs to another guest, RN-18),
-            both with the `field` that caused it
+            both with the `field` that caused it; or `CONCURRENT_MODIFICATION`
+            (the record changed while it was being edited, see the
+            `ConcurrentModification` response)
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Error" }
+              schema:
+                anyOf:
+                  - type: object
+                    required: [code, message, field]
+                    properties:
+                      code: { type: string, enum: [GUEST_DOCUMENT_LOCKED] }
+                      message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+                      field: { type: string }
+                  - type: object
+                    required: [code, message, field]
+                    properties:
+                      code: { type: string, enum: [GUEST_DOCUMENT_TAKEN] }
+                      message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+                      field: { type: string }
+                  - $ref: "#/components/schemas/ConcurrentModificationError"
 
   /admin/guests/{id}/deactivate:
     post:
@@ -499,6 +533,7 @@ paths:
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/ConcurrentModification" }
 
   /admin/guests/{id}/reactivate:
     post:
@@ -519,6 +554,7 @@ paths:
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/ConcurrentModification" }
 
   /admin/guests/{id}/access:
     post:
@@ -557,7 +593,23 @@ paths:
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { $ref: "#/components/responses/GuestInactive" }
+        "409":
+          description: >
+            `GUEST_INACTIVE` (the guest is inactive, RN-12, RN-18; `guestId`
+            lets the administrator reactivate it, CU-28) or
+            `CONCURRENT_MODIFICATION` (the guest row changed while the access
+            was generated, see the `ConcurrentModification` response)
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - type: object
+                    required: [code, message, guestId]
+                    properties:
+                      code: { type: string, enum: [GUEST_INACTIVE] }
+                      message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+                      guestId: { type: string, format: uuid }
+                  - $ref: "#/components/schemas/ConcurrentModificationError"
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /admin/guests/{id}/documents:
@@ -861,6 +913,7 @@ paths:
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/ConcurrentModification" }
     delete:
       operationId: deleteExpense
       tags: [admin-expenses]
@@ -1286,6 +1339,18 @@ components:
               code: { type: string, enum: [ENVIRONMENT_CODE_TAKEN] }
               message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
               field: { type: string, enum: [code] }
+    ConcurrentModification:
+      description: >
+        Two edits of the same record collided (optimistic locking, BE-SPR-DAT-13):
+        the record changed after the client loaded it. The client reloads the
+        record and retries. The `code` is always `CONCURRENT_MODIFICATION`.
+        Applies to environments, guests and expenses
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ConcurrentModificationError" }
+          example:
+            code: CONCURRENT_MODIFICATION
+            message: El registro cambió mientras lo editabas; vuelve a cargarlo e inténtalo de nuevo
     NoSession:
       description: No active session
       content:
@@ -1427,6 +1492,14 @@ components:
         code: { type: string, description: "Stable error code, e.g. VOUCHER_ALREADY_EXISTS" }
         message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
         field: { type: string, description: "Field name if this is a validation error" }
+
+    ConcurrentModificationError:
+      type: object
+      description: Optimistic-locking conflict (BE-SPR-DAT-13). The `code` is always `CONCURRENT_MODIFICATION`
+      required: [code, message]
+      properties:
+        code: { type: string, enum: [CONCURRENT_MODIFICATION] }
+        message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
 
     DocumentType:
       type: string
