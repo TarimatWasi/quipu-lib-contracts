@@ -261,14 +261,14 @@ paths:
         - name: status
           in: query
           schema: { type: string, enum: [ACTIVE, INACTIVE, ALL], default: ACTIVE }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Size"
       responses:
         "200":
-          description: Environment list
+          description: One page of the environment list
           content:
             application/json:
-              schema:
-                type: array
-                items: { $ref: "#/components/schemas/Environment" }
+              schema: { $ref: "#/components/schemas/PagedEnvironments" }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
@@ -290,6 +290,8 @@ paths:
       responses:
         "201":
           description: Environment created, always ACTIVE
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Environment" }
@@ -385,12 +387,14 @@ paths:
           in: query
           description: "CURRENT is every guest except the inactive ones (pending activation, onboarding and active)"
           schema: { type: string, enum: [CURRENT, PENDING_ACTIVATION, ONBOARDING, ACTIVE, INACTIVE, ALL], default: CURRENT }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Size"
       responses:
         "200":
-          description: Guest list
+          description: One page of the guest list
           content:
             application/json:
-              schema: { type: array, items: { $ref: "#/components/schemas/GuestSummary" } }
+              schema: { $ref: "#/components/schemas/PagedGuests" }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
@@ -420,6 +424,7 @@ paths:
         "201":
           description: Guest created pending activation, with its first access
           headers:
+            Location: { $ref: "#/components/headers/Location" }
             Cache-Control: { required: true, schema: { type: string, enum: ["no-store"] } }
           content:
             application/json:
@@ -805,10 +810,12 @@ paths:
           in: query
           required: true
           schema: { type: string, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09" }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Size"
       responses:
         "200":
-          description: Expense list of the month, oldest first
-          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Expense" } } } }
+          description: One page of the expense list of the month, oldest first
+          content: { application/json: { schema: { $ref: "#/components/schemas/PagedExpenses" } } }
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -826,6 +833,8 @@ paths:
       responses:
         "201":
           description: Expense created
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
           content: { application/json: { schema: { $ref: "#/components/schemas/Expense" } } }
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
@@ -1222,6 +1231,22 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    Page:
+      name: page
+      in: query
+      description: Zero-based page number
+      schema: { type: integer, minimum: 0, default: 0 }
+    Size:
+      name: size
+      in: query
+      description: Items per page. The server caps a larger value to the maximum
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+
+  headers:
+    Location:
+      description: Absolute path of the created resource, with its masked id (RFC 9110, 201 Created)
+      required: true
+      schema: { type: string, example: "/bff/admin/guests/3f2b8c1e-5d4a-4e7b-9c10-2a6f8d0e1b34" }
 
   responses:
     ValidationFailed:
@@ -1358,6 +1383,37 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
 
   schemas:
+    PageMeta:
+      type: object
+      description: Where a page sits in the whole list
+      required: [size, number, totalElements, totalPages]
+      properties:
+        size: { type: integer, minimum: 1, description: "Items per page that were asked for (after the server cap)" }
+        number: { type: integer, minimum: 0, description: "Zero-based page number" }
+        totalElements: { type: integer, minimum: 0 }
+        totalPages: { type: integer, minimum: 0 }
+
+    PagedEnvironments:
+      type: object
+      required: [content, page]
+      properties:
+        content: { type: array, items: { $ref: "#/components/schemas/Environment" } }
+        page: { $ref: "#/components/schemas/PageMeta" }
+
+    PagedGuests:
+      type: object
+      required: [content, page]
+      properties:
+        content: { type: array, items: { $ref: "#/components/schemas/GuestSummary" } }
+        page: { $ref: "#/components/schemas/PageMeta" }
+
+    PagedExpenses:
+      type: object
+      required: [content, page]
+      properties:
+        content: { type: array, items: { $ref: "#/components/schemas/Expense" } }
+        page: { $ref: "#/components/schemas/PageMeta" }
+
     Error:
       type: object
       description: >
