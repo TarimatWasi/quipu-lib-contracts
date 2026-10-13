@@ -1176,7 +1176,17 @@ paths:
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/OnboardingAccessDenied" }
-        "409": { $ref: "#/components/responses/OnboardingConflict" }
+        "409":
+          description: >
+            An onboarding-state conflict (`ONBOARDING_STEP_OUT_OF_ORDER`, `ONBOARDING_ALREADY_COMPLETED`,
+            see the `OnboardingConflict` response) or `GUEST_EMAIL_TAKEN` (the contact email
+            already belongs to another guest, D-33)
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/OnboardingConflictError"
+                  - $ref: "#/components/schemas/GuestEmailTakenError"
 
   /guest/onboarding/documents:
     post:
@@ -1494,14 +1504,10 @@ components:
       description: >
         `ONBOARDING_STEP_OUT_OF_ORDER` (a step was attempted before its
         predecessor, RN-33) or `ONBOARDING_ALREADY_COMPLETED` (the guest is
-        already active: use the profile endpoint) or `GUEST_EMAIL_TAKEN` (the contact email
-        already belongs to another guest, D-33)
+        already active: use the profile endpoint)
       content:
         application/json:
-          schema:
-            anyOf:
-              - $ref: "#/components/schemas/OnboardingConflictError"
-              - $ref: "#/components/schemas/GuestEmailTakenError"
+          schema: { $ref: "#/components/schemas/OnboardingConflictError" }
     GuestEmailTaken:
       description: >
         The contact email already belongs to another guest (D-33). The `code` is always
