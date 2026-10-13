@@ -1377,11 +1377,13 @@ paths:
       operationId: uploadTemporaryVoucher
       tags: [temporary-guest]
       summary: >
-        Upload the one-time payment voucher of the current stay (RF-04, CU-22) — a
-        stay allows exactly one voucher, pending or approved (RN-03: single
-        non-recurring payment per stay). A returning guest keeps its record and
-        gets a new stay (RN-13, RN-18, `POST /admin/guests/{id}/stays`), and that
-        stay its own voucher.
+        Upload the one-time payment voucher (RF-04, CU-22) — a stay allows
+        exactly one voucher, pending or approved (RN-03: single non-recurring
+        payment per stay). The guest keeps its record across visits and each visit is
+        a stay (RN-13, RN-18, `POST /admin/guests/{id}/stays`); how each later stay
+        is paid (which stay a voucher, a status or a direct payment belongs to) is
+        defined together with the payments contract (TAR-185). Until then this
+        operation keeps its single-stay behaviour.
       security: [{ cookieAuth: [] }]
       x-roles: [GUEST] # guestType TEMPORARY
       requestBody:
@@ -1393,7 +1395,6 @@ paths:
               required: [file]
               properties:
                 file: { type: string, format: binary, description: "JPG/PNG/PDF, ≤5MB (RF-15)" }
-                stayId: { type: string, format: uuid, description: "The stay the voucher belongs to; omitted means the stay in course today" }
       responses:
         "201":
           description: Voucher uploaded, payment set to PENDING
@@ -2319,7 +2320,6 @@ components:
       properties:
         id: { type: string, format: uuid }
         guestId: { type: string, format: uuid }
-        stayId: { type: string, format: uuid, nullable: true, description: "The stay a temporary guest's voucher belongs to (RN-03); null for a guest with a contract" }
         period: { type: string, example: "2026-09" }
         amount: { type: number }
         paymentMethod: { type: string, nullable: true, description: "Free text per payment (RN-28)" }
@@ -2332,7 +2332,6 @@ components:
       type: object
       required: [period, status]
       properties:
-        stayId: { type: string, format: uuid, description: "Only for a temporary guest: the stay this status is about" }
         period: { type: string, example: "2026-09" }
         status: { type: string, enum: [PAID, UNDER_REVIEW, UNPAID, OVERDUE] }
 
