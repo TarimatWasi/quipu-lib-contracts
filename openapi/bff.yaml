@@ -498,8 +498,8 @@ paths:
       operationId: updateGuest
       tags: [admin-guests]
       summary: >
-        Correct the document (only while pending activation) and manage the
-        stay data (RN-17, RN-36). The personal and contact data belong to the
+        Correct the document (only while pending activation, RN-36). The
+        stays are managed through `/admin/guests/{id}/stays` (RN-17). The personal and contact data belong to the
         guest alone and are edited through the guest's own endpoints.
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
@@ -1990,14 +1990,12 @@ components:
       type: object
       description: >
         What the administrator may change: the document, only while the guest
-        is pending activation (RN-36), and the stay data of a temporary guest.
-        Personal and contact data are the guest's alone (RN-17).
+        is pending activation (RN-36). The stays of a temporary guest are managed
+        through `/admin/guests/{id}/stays` (RN-13, RN-17). Personal and contact
+        data are the guest's alone (RN-17).
       properties:
         documentType: { $ref: "#/components/schemas/DocumentType" }
         documentNumber: { type: string, minLength: 1, maxLength: 20 }
-        stayStartDate: { type: string, format: date, description: "Only when guest type=TEMPORARY", deprecated: true }
-        stayEndDate: { type: string, format: date, description: "Only when guest type=TEMPORARY", deprecated: true }
-        agreedAmount: { type: number, description: "Only when guest type=TEMPORARY", deprecated: true }
 
     PersonalDataInput:
       type: object
