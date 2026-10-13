@@ -1377,10 +1377,11 @@ paths:
       operationId: uploadTemporaryVoucher
       tags: [temporary-guest]
       summary: >
-        Upload one-time payment voucher (RF-04, CU-22) — a temporary guest
-        record allows exactly one voucher ever, pending or approved
-        (RN-03: single non-recurring payment). A second stay is a new
-        guest record (RN-13), never a second voucher on this one.
+        Upload the one-time payment voucher of the current stay (RF-04, CU-22) — a
+        stay allows exactly one voucher, pending or approved (RN-03: single
+        non-recurring payment per stay). A returning guest keeps its record and
+        gets a new stay (RN-13, RN-18, `POST /admin/guests/{id}/stays`), and that
+        stay its own voucher.
       security: [{ cookieAuth: [] }]
       x-roles: [GUEST] # guestType TEMPORARY
       requestBody:
@@ -1752,6 +1753,7 @@ components:
       type: object
       description: At least one field; the resulting dates must stay valid and may not overlap another stay of the guest
       minProperties: 1
+      additionalProperties: false
       properties:
         startDate: { type: string, format: date }
         endDate: { type: string, format: date }
