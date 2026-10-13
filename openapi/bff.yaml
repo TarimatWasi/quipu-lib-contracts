@@ -1604,7 +1604,7 @@ components:
     GuestHasActiveContractError:
       type: object
       description: The guest has a contract in force, so it cannot be deactivated (RN-12). Debt does not block it
-      required: [code, message]
+      required: [code, message, contractId]
       properties:
         code: { type: string, enum: [GUEST_HAS_ACTIVE_CONTRACT] }
         message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
