@@ -2334,7 +2334,7 @@ components:
     ContractSummary:
       type: object
       description: A contract in a list, without the signed file URL
-      required: [id, environmentId, guestId, monthlyAmount, paymentDay, graceDays, startDate, status]
+      required: [id, environmentId, guestId, monthlyAmount, paymentDay, graceDays, startDate, status, expiringSoon]
       properties:
         id: { type: string, format: uuid }
         environmentId: { type: string, format: uuid }
