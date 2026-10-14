@@ -1056,8 +1056,8 @@ paths:
                 reason: { type: string, maxLength: 500, description: "Required when status=REJECTED, not blank (RN-05); shown to the guest in the app only" }
       responses:
         "200":
-          description: Payment resolved
-          content: { application/json: { schema: { $ref: "#/components/schemas/Payment" } } }
+          description: Payment resolved (without the voucher URL; ask `getPayment` for it)
+          content: { application/json: { schema: { $ref: "#/components/schemas/PaymentSummary" } } }
         "400":
           description: "`PAYMENT_REASON_REQUIRED` (empty reason on rejection, RN-05) or `VALIDATION_ERROR`"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
@@ -2485,7 +2485,7 @@ components:
     PaymentSummary:
       type: object
       description: A payment without its voucher URL — what lists and the guest's own responses carry
-      required: [id, guestId, amount, status, createdAt]
+      required: [id, guestId, contractId, stayId, period, amount, status, createdAt]
       properties:
         id: { type: string, format: uuid }
         guestId: { type: string, format: uuid }
@@ -2502,7 +2502,7 @@ components:
     Payment:
       type: object
       description: A payment with its signed voucher URL (admin detail, `getPayment`)
-      required: [id, guestId, amount, status, voucherUrl, createdAt]
+      required: [id, guestId, contractId, stayId, period, amount, status, voucherUrl, createdAt]
       properties:
         id: { type: string, format: uuid }
         guestId: { type: string, format: uuid }
@@ -2527,7 +2527,7 @@ components:
     PaymentQueueItem:
       type: object
       description: A row of the review queue (A5); it does not show the amount
-      required: [id, guestId, documentNumber, guestType, status, createdAt]
+      required: [id, guestId, guestName, documentNumber, guestType, environmentCode, period, status, createdAt]
       properties:
         id: { type: string, format: uuid }
         guestId: { type: string, format: uuid }
