@@ -866,7 +866,9 @@ paths:
       parameters: [{ $ref: "#/components/parameters/Id" }]
       responses:
         "200":
-          description: Contract detail
+          description: "Contract detail (never cacheable: it carries a freshly signed file URL)"
+          headers:
+            Cache-Control: { required: true, schema: { type: string, enum: ["no-store"] } }
           content: { application/json: { schema: { $ref: "#/components/schemas/Contract" } } }
         "401": { $ref: "#/components/responses/NoSession" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -1027,7 +1029,9 @@ paths:
       parameters: [{ $ref: "#/components/parameters/Id" }]
       responses:
         "200":
-          description: Payment detail
+          description: "Payment detail (never cacheable: it carries a freshly signed voucher URL)"
+          headers:
+            Cache-Control: { required: true, schema: { type: string, enum: ["no-store"] } }
           content: { application/json: { schema: { $ref: "#/components/schemas/Payment" } } }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -1230,7 +1234,9 @@ paths:
       x-roles: [GUEST] # guestType CONTRACT
       responses:
         "200":
-          description: Own contract, whatever its status
+          description: "Own contract, whatever its status (never cacheable: it carries a freshly signed file URL)"
+          headers:
+            Cache-Control: { required: true, schema: { type: string, enum: ["no-store"] } }
           content: { application/json: { schema: { $ref: "#/components/schemas/Contract" } } }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/GuestAccessDenied" }
@@ -2486,6 +2492,17 @@ components:
       type: object
       description: A payment without its voucher URL — what lists and the guest's own responses carry
       required: [id, guestId, contractId, stayId, period, amount, status, createdAt]
+      oneOf:
+        - description: A period of a contract (guest with a contract)
+          properties:
+            contractId: { type: string }
+            period: { type: string }
+            stayId: { type: string, nullable: true, enum: [null] }
+        - description: The stay of a temporary guest
+          properties:
+            stayId: { type: string }
+            contractId: { type: string, nullable: true, enum: [null] }
+            period: { type: string, nullable: true, enum: [null] }
       properties:
         id: { type: string, format: uuid }
         guestId: { type: string, format: uuid }
@@ -2503,6 +2520,17 @@ components:
       type: object
       description: A payment with its signed voucher URL (admin detail, `getPayment`)
       required: [id, guestId, contractId, stayId, period, amount, status, voucherUrl, createdAt]
+      oneOf:
+        - description: A period of a contract (guest with a contract)
+          properties:
+            contractId: { type: string }
+            period: { type: string }
+            stayId: { type: string, nullable: true, enum: [null] }
+        - description: The stay of a temporary guest
+          properties:
+            stayId: { type: string }
+            contractId: { type: string, nullable: true, enum: [null] }
+            period: { type: string, nullable: true, enum: [null] }
       properties:
         id: { type: string, format: uuid }
         guestId: { type: string, format: uuid }
