@@ -498,8 +498,8 @@ paths:
       operationId: updateGuest
       tags: [admin-guests]
       summary: >
-        Correct the document (only while pending activation) and manage the
-        stay data (RN-17, RN-36). The personal and contact data belong to the
+        Correct the document (only while pending activation, RN-36). The
+        stays are managed through `/admin/guests/{id}/stays` (RN-17). The personal and contact data belong to the
         guest alone and are edited through the guest's own endpoints.
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
@@ -592,6 +592,94 @@ paths:
               schema:
                 anyOf:
                   - $ref: "#/components/schemas/GuestHasPendingDebtError"
+                  - $ref: "#/components/schemas/ConcurrentModificationError"
+
+  /admin/guests/{id}/stays:
+    get:
+      operationId: listGuestStays
+      tags: [admin-guests]
+      summary: Stay history of a temporary guest, newest first (RN-13, CU-06, CU-31)
+      description: >
+        Every visit keeps its dates and agreed amount; a new stay is a new row of the same guest, never a new guest (RN-13, RN-18).
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/After" }
+      responses:
+        "200":
+          description: One page of the stays of the guest
+          content: { application/json: { schema: { $ref: "#/components/schemas/PagedStays" } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: createGuestStay
+      tags: [admin-guests]
+      summary: Register a stay of a temporary guest (RN-13, RN-17, CU-31)
+      description: >
+        Only for an active temporary guest. The dates may not overlap another stay of the same guest;
+        a stay in the future may be registered while the previous one is still running.
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/StayInput" } } }
+      responses:
+        "201":
+          description: Stay registered
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+          content: { application/json: { schema: { $ref: "#/components/schemas/Stay" } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: >
+            `GUEST_NOT_ACTIVE` (the guest is not active, RN-35), `GUEST_NOT_TEMPORARY` (only temporary
+            guests have stays) or `STAY_OVERLAP` (the dates cross another stay of the guest)
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/GuestNotActiveError"
+                  - $ref: "#/components/schemas/GuestNotTemporaryError"
+                  - $ref: "#/components/schemas/StayOverlapError"
+
+  /admin/guests/{id}/stays/{stayId}:
+    patch:
+      operationId: updateGuestStay
+      tags: [admin-guests]
+      summary: Correct the dates or the agreed amount of a stay (RN-17, CU-31)
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - { $ref: "#/components/parameters/StayId" }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/StayUpdateInput" } } }
+      responses:
+        "200":
+          description: Stay updated
+          content: { application/json: { schema: { $ref: "#/components/schemas/Stay" } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: >
+            `STAY_OVERLAP` (the new dates cross another stay of the guest) or `CONCURRENT_MODIFICATION`
+            (see the `ConcurrentModification` response)
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/StayOverlapError"
                   - $ref: "#/components/schemas/ConcurrentModificationError"
 
   /admin/guests/{id}/access:
@@ -1289,10 +1377,13 @@ paths:
       operationId: uploadTemporaryVoucher
       tags: [temporary-guest]
       summary: >
-        Upload one-time payment voucher (RF-04, CU-22) — a temporary guest
-        record allows exactly one voucher ever, pending or approved
-        (RN-03: single non-recurring payment). A second stay is a new
-        guest record (RN-13), never a second voucher on this one.
+        Upload the one-time payment voucher (RF-04, CU-22) — a stay allows
+        exactly one voucher, pending or approved (RN-03: single non-recurring
+        payment per stay). The guest keeps its record across visits and each visit is
+        a stay (RN-13, RN-18, `POST /admin/guests/{id}/stays`); how each later stay
+        is paid (which stay a voucher, a status or a direct payment belongs to) is
+        defined together with the payments contract (TAR-185). Until then this
+        operation keeps its single-stay behaviour.
       security: [{ cookieAuth: [] }]
       x-roles: [GUEST] # guestType TEMPORARY
       requestBody:
@@ -1345,6 +1436,11 @@ components:
   parameters:
     Id:
       name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    StayId:
+      name: stayId
       in: path
       required: true
       schema: { type: string, format: uuid }
@@ -1637,6 +1733,57 @@ components:
           description: The periods owed, oldest first, so the UI can list them and offer the direct payment (RN-23)
           items: { type: string, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09" }
 
+    Stay:
+      type: object
+      description: One visit of a temporary guest (RN-13); the stay of a guest is never edited into a new one, a new visit is a new row
+      required: [id, startDate, endDate, agreedAmount]
+      properties:
+        id: { type: string, format: uuid }
+        startDate: { type: string, format: date }
+        endDate: { type: string, format: date, description: "On or after startDate" }
+        agreedAmount: { type: number, exclusiveMinimum: true, minimum: 0, maximum: 99999999.99, multipleOf: 0.01, description: "In soles, greater than 0, at most two decimals" }
+
+    StayInput:
+      type: object
+      required: [startDate, endDate, agreedAmount]
+      properties:
+        startDate: { type: string, format: date }
+        endDate: { type: string, format: date, description: "On or after startDate" }
+        agreedAmount: { type: number, exclusiveMinimum: true, minimum: 0, maximum: 99999999.99, multipleOf: 0.01, description: "In soles, greater than 0, at most two decimals" }
+
+    StayUpdateInput:
+      type: object
+      description: At least one field; the resulting dates must stay valid and may not overlap another stay of the guest
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        startDate: { type: string, format: date }
+        endDate: { type: string, format: date }
+        agreedAmount: { type: number, exclusiveMinimum: true, minimum: 0, maximum: 99999999.99, multipleOf: 0.01 }
+
+    PagedStays:
+      type: object
+      required: [content, nextCursor]
+      properties:
+        content: { type: array, items: { $ref: "#/components/schemas/Stay" } }
+        nextCursor: { $ref: "#/components/schemas/NextCursor" }
+
+    StayOverlapError:
+      type: object
+      description: The dates cross another stay of the same guest. The `code` is always `STAY_OVERLAP`
+      required: [code, message]
+      properties:
+        code: { type: string, enum: [STAY_OVERLAP] }
+        message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+
+    GuestNotTemporaryError:
+      type: object
+      description: Only temporary guests have stays (RN-13). The `code` is always `GUEST_NOT_TEMPORARY`
+      required: [code, message]
+      properties:
+        code: { type: string, enum: [GUEST_NOT_TEMPORARY] }
+        message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+
     DocumentType:
       type: string
       enum: [DNI, CE, PASSPORT]
@@ -1843,14 +1990,14 @@ components:
       type: object
       description: >
         What the administrator may change: the document, only while the guest
-        is pending activation (RN-36), and the stay data of a temporary guest.
-        Personal and contact data are the guest's alone (RN-17).
+        is pending activation (RN-36). The stays of a temporary guest are managed
+        through `/admin/guests/{id}/stays` (RN-13, RN-17). Personal and contact
+        data are the guest's alone (RN-17).
+      minProperties: 1
+      additionalProperties: false
       properties:
         documentType: { $ref: "#/components/schemas/DocumentType" }
         documentNumber: { type: string, minLength: 1, maxLength: 20 }
-        stayStartDate: { type: string, format: date, description: "Only when guest type=TEMPORARY" }
-        stayEndDate: { type: string, format: date, description: "Only when guest type=TEMPORARY" }
-        agreedAmount: { type: number, description: "Only when guest type=TEMPORARY" }
 
     PersonalDataInput:
       type: object
@@ -1925,9 +2072,9 @@ components:
         phone: { type: string, nullable: true }
         contactEmail: { type: string, nullable: true }
         emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
-        stayStartDate: { type: string, format: date, description: "Only when type=TEMPORARY" }
-        stayEndDate: { type: string, format: date, description: "Only when type=TEMPORARY" }
-        agreedAmount: { type: number, description: "Only when type=TEMPORARY" }
+        stayStartDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
+        stayEndDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
+        agreedAmount: { type: number, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
         documentCount: { type: integer, minimum: 0, maximum: 5 }
         accessExpiresAt: { type: string, format: date-time, nullable: true, description: "Expiry of the current unused access, if there is one" }
         contract: { $ref: "#/components/schemas/Contract" }
@@ -1951,9 +2098,9 @@ components:
         phone: { type: string, nullable: true }
         contactEmail: { type: string, nullable: true }
         emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
-        stayStartDate: { type: string, format: date, description: "Only when type=TEMPORARY" }
-        stayEndDate: { type: string, format: date, description: "Only when type=TEMPORARY" }
-        agreedAmount: { type: number, description: "Only when type=TEMPORARY" }
+        stayStartDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
+        stayEndDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
+        agreedAmount: { type: number, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
         documentCount: { type: integer, minimum: 0, maximum: 5 }
         accessExpiresAt: { type: string, format: date-time, nullable: true, description: "Expiry of the current unused access, if there is one" }
         contract: { $ref: "#/components/schemas/Contract" }
@@ -1977,9 +2124,9 @@ components:
         phone: { type: string }
         contactEmail: { type: string, nullable: true }
         emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
-        stayStartDate: { type: string, format: date, description: "Only when type=TEMPORARY" }
-        stayEndDate: { type: string, format: date, description: "Only when type=TEMPORARY" }
-        agreedAmount: { type: number, description: "Only when type=TEMPORARY" }
+        stayStartDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
+        stayEndDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
+        agreedAmount: { type: number, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
         documentCount: { type: integer, minimum: 0, maximum: 5 }
         accessExpiresAt: { type: string, format: date-time, nullable: true, description: "Expiry of the current unused access, if there is one" }
         contract: { $ref: "#/components/schemas/Contract" }
@@ -2003,9 +2150,9 @@ components:
         phone: { type: string }
         contactEmail: { type: string, nullable: true }
         emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
-        stayStartDate: { type: string, format: date, description: "Only when type=TEMPORARY" }
-        stayEndDate: { type: string, format: date, description: "Only when type=TEMPORARY" }
-        agreedAmount: { type: number, description: "Only when type=TEMPORARY" }
+        stayStartDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
+        stayEndDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
+        agreedAmount: { type: number, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
         documentCount: { type: integer, minimum: 0, maximum: 5 }
         accessExpiresAt: { type: string, format: date-time, nullable: true, description: "Expiry of the current unused access, if there is one" }
         contract: { $ref: "#/components/schemas/Contract" }
@@ -2028,9 +2175,9 @@ components:
         phone: { type: string, nullable: true }
         contactEmail: { type: string, nullable: true }
         emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
-        stayStartDate: { type: string, format: date, description: "Only when type=TEMPORARY" }
-        stayEndDate: { type: string, format: date, description: "Only when type=TEMPORARY" }
-        agreedAmount: { type: number, description: "Only when type=TEMPORARY" }
+        stayStartDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
+        stayEndDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
+        agreedAmount: { type: number, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
         documentCount: { type: integer, minimum: 0, maximum: 5 }
         accessExpiresAt: { type: string, format: date-time, nullable: true, description: "Expiry of the current unused access, if there is one" }
         contract: { $ref: "#/components/schemas/Contract" }
