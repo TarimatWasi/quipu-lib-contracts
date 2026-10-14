@@ -983,8 +983,14 @@ paths:
                 Send exactly one of `period` (a guest with a contract) or `stayId` (a temporary
                 guest, whose single payment belongs to a stay, RN-03).
               oneOf:
-                - required: [period]
-                - required: [stayId]
+                - type: object
+                  required: [period]
+                  properties:
+                    period: { type: string }
+                - type: object
+                  required: [stayId]
+                  properties:
+                    stayId: { type: string }
               properties:
                 file: { type: string, format: binary, description: "JPG/PNG/PDF, ≤5MB, checked by content (RF-15)" }
                 guestId: { type: string, format: uuid }
