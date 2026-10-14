@@ -1993,6 +1993,8 @@ components:
         is pending activation (RN-36). The stays of a temporary guest are managed
         through `/admin/guests/{id}/stays` (RN-13, RN-17). Personal and contact
         data are the guest's alone (RN-17).
+      minProperties: 1
+      additionalProperties: false
       properties:
         documentType: { $ref: "#/components/schemas/DocumentType" }
         documentNumber: { type: string, minLength: 1, maxLength: 20 }
