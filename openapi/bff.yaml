@@ -765,14 +765,18 @@ paths:
     get:
       operationId: listGuestPaymentsByAdmin
       tags: [admin-guests]
-      summary: A guest's payment history, admin view (RF-10)
+      summary: A guest's payment history, admin view (RF-10) — newest first, without the voucher URL (ask `getPayment` for it)
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
-      parameters: [{ $ref: "#/components/parameters/Id" }]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/After"
       responses:
         "200":
-          description: Payment history for the given guest
-          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Payment" } } } }
+          description: Payment history page for the given guest
+          content: { application/json: { schema: { $ref: "#/components/schemas/PagedPayments" } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -904,7 +908,7 @@ paths:
                   paymentsOverdue: { type: integer }
                   pendingVouchers:
                     type: array
-                    items: { $ref: "#/components/schemas/Payment" }
+                    items: { $ref: "#/components/schemas/PaymentSummary" }
         "401": { $ref: "#/components/responses/NoSession" }
 
   /admin/finance:
@@ -938,17 +942,24 @@ paths:
     get:
       operationId: listPayments
       tags: [admin-payments]
-      summary: Payment review queue (RF-05, CU-05)
+      summary: Payment review queue (RF-05, CU-05) — oldest first, so the review is first in, first out
+      description: >
+        Each row carries the guest, the environment (or the temporary mark), the period and the
+        upload date, and no amount: the administrator compares the declared amount with the
+        voucher in `getPayment` before resolving (RN-16, A5).
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       parameters:
         - name: status
           in: query
           schema: { type: string, enum: [PENDING, APPROVED, REJECTED] }
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/After"
       responses:
         "200":
-          description: Payment list
-          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Payment" } } } }
+          description: Payment queue page
+          content: { application/json: { schema: { $ref: "#/components/schemas/PagedPaymentQueue" } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
     post:
       operationId: createDirectPayment
@@ -965,26 +976,67 @@ paths:
           multipart/form-data:
             schema:
               type: object
-              required: [file, guestId, period, amount]
+              required: [file, guestId, amount]
+              description: >
+                Send exactly one of `period` (a guest with a contract) or `stayId` (a temporary
+                guest, whose single payment belongs to a stay, RN-03).
               properties:
-                file: { type: string, format: binary, description: "JPG/PNG/PDF, ≤5MB (RF-15)" }
+                file: { type: string, format: binary, description: "JPG/PNG/PDF, ≤5MB, checked by content (RF-15)" }
                 guestId: { type: string, format: uuid }
-                period: { type: string, pattern: "^\\d{4}-\\d{2}$" }
-                amount: { type: number }
+                period: { type: string, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09" }
+                stayId: { type: string, format: uuid }
+                amount: { type: number, exclusiveMinimum: true, minimum: 0, maximum: 99999999.99, multipleOf: 0.01, description: "In soles, greater than 0, at most two decimals" }
+                paymentMethod: { type: string, maxLength: 50, description: "Optional free text, e.g. Yape/transfer/cash (RN-28)" }
       responses:
         "201":
           description: "Payment registered, status APPROVED immediately (RN-23)"
-          content: { application/json: { schema: { $ref: "#/components/schemas/Payment" } } }
-        "400": { description: "Invalid file (RF-15)" }
+          content: { application/json: { schema: { $ref: "#/components/schemas/PaymentSummary" } } }
+        "400":
+          description: >
+            `VOUCHER_INVALID_FILE` (not JPG, PNG or PDF by content, or over 5 MB, RF-15) or
+            `VALIDATION_ERROR` (any other field, with its `field`: amount, period, stayId, or both
+            or neither of period and stayId)
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "401": { $ref: "#/components/responses/NoSession" }
-        "409": { description: "An approved payment already exists for this period (RN-02)" }
+        "404": { description: "The guest or the stay does not exist (`RESOURCE_NOT_FOUND`)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409":
+          description: >
+            `GUEST_NOT_ACTIVE` (RN-35), `PAYMENT_ALREADY_EXISTS_FOR_PERIOD` (an approved payment
+            already exists for the period or the stay, RN-02) or `VOUCHER_ALREADY_EXISTS` (a voucher
+            is still pending for it: resolve it first)
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/GuestNotActiveError"
+                  - $ref: "#/components/schemas/PaymentAlreadyExistsForPeriodError"
+                  - $ref: "#/components/schemas/VoucherAlreadyExistsError"
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /admin/payments/{id}:
+    get:
+      operationId: getPayment
+      tags: [admin-payments]
+      summary: Payment detail with the voucher to review (A5.2, RN-16)
+      description: The voucher URL is signed when this is requested, expires in 15 minutes and forces the download
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200":
+          description: Payment detail
+          content: { application/json: { schema: { $ref: "#/components/schemas/Payment" } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
     patch:
       operationId: resolvePayment
       tags: [admin-payments]
       summary: Approve or reject a payment (RF-05, CU-05)
+      description: >
+        A pending payment is resolved once. Rejecting does not close the period: the guest can
+        upload a new voucher. A short payment is rejected with a reason and the guest uploads a
+        voucher for the full amount (RN-16).
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       parameters: [{ $ref: "#/components/parameters/Id" }]
@@ -995,16 +1047,31 @@ paths:
             schema:
               type: object
               required: [status]
+              additionalProperties: false
               properties:
                 status: { type: string, enum: [APPROVED, REJECTED] }
-                reason: { type: string, description: "Required when status=REJECTED (RN-05)" }
+                reason: { type: string, maxLength: 500, description: "Required when status=REJECTED, not blank (RN-05); shown to the guest in the app only" }
       responses:
         "200":
           description: Payment resolved
           content: { application/json: { schema: { $ref: "#/components/schemas/Payment" } } }
-        "400": { description: "Empty reason on rejection (RN-05)" }
+        "400":
+          description: "`PAYMENT_REASON_REQUIRED` (empty reason on rejection, RN-05) or `VALIDATION_ERROR`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "401": { $ref: "#/components/responses/NoSession" }
-        "409": { description: "Payment already resolved" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: >
+            `PAYMENT_ALREADY_RESOLVED` (another process resolved it first) or
+            `PAYMENT_ALREADY_EXISTS_FOR_PERIOD` (approving it would leave two approved payments for
+            the same period or stay)
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/PaymentAlreadyResolvedError"
+                  - $ref: "#/components/schemas/PaymentAlreadyExistsForPeriodError"
 
   # ───────────────────────── ADMIN: EXPENSES (RF-07, CU-08) ─────────────────────────
   /admin/expenses:
@@ -1170,13 +1237,17 @@ paths:
     get:
       operationId: listOwnPayments
       tags: [guest]
-      summary: Own payment history (RF-10, CU-19) — own record only (RN-09)
+      summary: Own payment history (RF-10, CU-19) — own record only (RN-09), newest first, without the voucher URL
       security: [{ cookieAuth: [] }]
       x-roles: [GUEST] # guestType CONTRACT
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/After"
       responses:
         "200":
-          description: Own payment history
-          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Payment" } } } }
+          description: Own payment history page
+          content: { application/json: { schema: { $ref: "#/components/schemas/PagedPayments" } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/GuestAccessDenied" }
     post:
@@ -1191,16 +1262,21 @@ paths:
           multipart/form-data:
             schema:
               type: object
-              required: [file, period]
+              required: [file, period, amount]
               properties:
-                file: { type: string, format: binary, description: "JPG/PNG/PDF, ≤5MB (RF-15)" }
-                period: { type: string, pattern: "^\\d{4}-\\d{2}$" }
-                paymentMethod: { type: string, description: "Optional free text, e.g. Yape/transfer/cash (RN-28)" }
+                file: { type: string, format: binary, description: "JPG/PNG/PDF, ≤5MB, checked by content (RF-15)" }
+                period: { type: string, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09", description: "A month of the contract, up to the current month" }
+                amount: { type: number, exclusiveMinimum: true, minimum: 0, maximum: 99999999.99, multipleOf: 0.01, description: "Declared amount, in soles; the administrator compares it with the voucher (RN-16)" }
+                paymentMethod: { type: string, maxLength: 50, description: "Optional free text, e.g. Yape/transfer/cash (RN-28)" }
       responses:
         "201":
           description: Voucher uploaded, payment set to PENDING
-          content: { application/json: { schema: { $ref: "#/components/schemas/Payment" } } }
-        "400": { description: "Invalid file (RF-15)" }
+          content: { application/json: { schema: { $ref: "#/components/schemas/PaymentSummary" } } }
+        "400":
+          description: >
+            `VOUCHER_INVALID_FILE` (not JPG, PNG or PDF by content, or over 5 MB, RF-15) or
+            `VALIDATION_ERROR` (any other field, with its `field`: amount, period)
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "401": { $ref: "#/components/responses/NoSession" }
         "403":
           description: >
@@ -1216,7 +1292,18 @@ paths:
                 properties:
                   code: { type: string, enum: [VOUCHER_NO_ACTIVE_CONTRACT, AUTH_ONBOARDING_REQUIRED, AUTH_PASSWORD_CHANGE_REQUIRED, AUTH_FORBIDDEN] }
                   message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
-        "409": { description: "A pending voucher already exists for this period (RN-15)" }
+        "409":
+          description: >
+            `GUEST_NOT_ACTIVE` (RN-35), `PAYMENT_ALREADY_EXISTS_FOR_PERIOD` (the period is already
+            approved, RN-02, D-28) or `VOUCHER_ALREADY_EXISTS` (a voucher is pending for this period,
+            RN-15)
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/GuestNotActiveError"
+                  - $ref: "#/components/schemas/PaymentAlreadyExistsForPeriodError"
+                  - $ref: "#/components/schemas/VoucherAlreadyExistsError"
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /guest/profile:
@@ -1379,15 +1466,19 @@ paths:
     get:
       operationId: getTemporaryGuestPaymentStatus
       tags: [temporary-guest]
-      summary: Payment status for the stay period (CU-21)
+      summary: Payment status of the stay in force (CU-21)
+      description: >
+        The stay in force today, otherwise the next one, otherwise the last one (the same rule
+        as the stay fields of the guest detail).
       security: [{ cookieAuth: [] }]
       x-roles: [GUEST] # guestType TEMPORARY
       responses:
         "200":
           description: Stay payment status
-          content: { application/json: { schema: { $ref: "#/components/schemas/PeriodStatus" } } }
+          content: { application/json: { schema: { $ref: "#/components/schemas/StayPaymentStatus" } } }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/GuestAccessDenied" }
+        "404": { description: "The guest has no stay yet (`RESOURCE_NOT_FOUND`)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   /temporary-guest/payments:
     post:
@@ -1397,10 +1488,9 @@ paths:
         Upload the one-time payment voucher (RF-04, CU-22) — a stay allows
         exactly one voucher, pending or approved (RN-03: single non-recurring
         payment per stay). The guest keeps its record across visits and each visit is
-        a stay (RN-13, RN-18, `POST /admin/guests/{id}/stays`); how each later stay
-        is paid (which stay a voucher, a status or a direct payment belongs to) is
-        defined together with the payments contract (TAR-185). Until then this
-        operation keeps its single-stay behaviour.
+        a stay (RN-13, RN-18, `POST /admin/guests/{id}/stays`). The guest does not choose
+        the stay: the voucher belongs to the stay in force today, otherwise to the next one
+        that has no pending or approved payment.
       security: [{ cookieAuth: [] }]
       x-roles: [GUEST] # guestType TEMPORARY
       requestBody:
@@ -1409,17 +1499,44 @@ paths:
           multipart/form-data:
             schema:
               type: object
-              required: [file]
+              required: [file, amount]
               properties:
-                file: { type: string, format: binary, description: "JPG/PNG/PDF, ≤5MB (RF-15)" }
+                file: { type: string, format: binary, description: "JPG/PNG/PDF, ≤5MB, checked by content (RF-15)" }
+                amount: { type: number, exclusiveMinimum: true, minimum: 0, maximum: 99999999.99, multipleOf: 0.01, description: "Declared amount, in soles; the administrator compares it with the voucher (RN-16)" }
+                paymentMethod: { type: string, maxLength: 50, description: "Optional free text, e.g. Yape/transfer/cash (RN-28)" }
       responses:
         "201":
           description: Voucher uploaded, payment set to PENDING
-          content: { application/json: { schema: { $ref: "#/components/schemas/Payment" } } }
-        "400": { description: "Invalid file (RF-15)" }
+          content: { application/json: { schema: { $ref: "#/components/schemas/PaymentSummary" } } }
+        "400":
+          description: >
+            `VOUCHER_INVALID_FILE` (not JPG, PNG or PDF by content, or over 5 MB, RF-15) or
+            `VALIDATION_ERROR` (any other field, with its `field`: amount)
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "401": { $ref: "#/components/responses/NoSession" }
-        "403": { $ref: "#/components/responses/GuestAccessDenied" }
-        "409": { description: "A voucher already exists for this stay, pending or approved (RN-03, RN-15)" }
+        "403":
+          description: >
+            `VOUCHER_NO_ACTIVE_STAY` (the guest has no stay in force or coming, CU-22) or
+            `AUTH_FORBIDDEN` (a guest of the other type, RN-09)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, message]
+                properties:
+                  code: { type: string, enum: [VOUCHER_NO_ACTIVE_STAY, AUTH_ONBOARDING_REQUIRED, AUTH_PASSWORD_CHANGE_REQUIRED, AUTH_FORBIDDEN] }
+                  message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+        "409":
+          description: >
+            `GUEST_NOT_ACTIVE` (RN-35), `PAYMENT_ALREADY_EXISTS_FOR_PERIOD` (the stay is already paid,
+            RN-03) or `VOUCHER_ALREADY_EXISTS` (a voucher is pending for the stay, RN-03, RN-15)
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/GuestNotActiveError"
+                  - $ref: "#/components/schemas/PaymentAlreadyExistsForPeriodError"
+                  - $ref: "#/components/schemas/VoucherAlreadyExistsError"
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /temporary-guest/profile:
@@ -2097,7 +2214,7 @@ components:
         contract: { $ref: "#/components/schemas/Contract" }
         paymentHistory:
           type: array
-          items: { $ref: "#/components/schemas/Payment" }
+          items: { $ref: "#/components/schemas/PaymentSummary" }
         status: { type: string, enum: [PENDING_ACTIVATION] }
         onboardingProgress: { type: string, enum: [NOT_STARTED] }
 
@@ -2123,7 +2240,7 @@ components:
         contract: { $ref: "#/components/schemas/Contract" }
         paymentHistory:
           type: array
-          items: { $ref: "#/components/schemas/Payment" }
+          items: { $ref: "#/components/schemas/PaymentSummary" }
         status: { type: string, enum: [ONBOARDING] }
         onboardingProgress: { type: string, enum: [NOT_STARTED, PASSWORD_SET] }
 
@@ -2149,7 +2266,7 @@ components:
         contract: { $ref: "#/components/schemas/Contract" }
         paymentHistory:
           type: array
-          items: { $ref: "#/components/schemas/Payment" }
+          items: { $ref: "#/components/schemas/PaymentSummary" }
         status: { type: string, enum: [ONBOARDING] }
         onboardingProgress: { type: string, enum: [PERSONAL_DATA_SAVED, DOCUMENTS_DONE] }
 
@@ -2175,7 +2292,7 @@ components:
         contract: { $ref: "#/components/schemas/Contract" }
         paymentHistory:
           type: array
-          items: { $ref: "#/components/schemas/Payment" }
+          items: { $ref: "#/components/schemas/PaymentSummary" }
         status: { type: string, enum: [ACTIVE] }
         onboardingProgress: { type: string, enum: [COMPLETED] }
 
@@ -2200,7 +2317,7 @@ components:
         contract: { $ref: "#/components/schemas/Contract" }
         paymentHistory:
           type: array
-          items: { $ref: "#/components/schemas/Payment" }
+          items: { $ref: "#/components/schemas/PaymentSummary" }
         status: { type: string, enum: [INACTIVE] }
         onboardingProgress: { $ref: "#/components/schemas/OnboardingProgress" }
 
@@ -2362,26 +2479,118 @@ components:
         code: { type: string, enum: [GUEST_NOT_CONTRACT] }
         message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
 
-    Payment:
+    PaymentSummary:
       type: object
-      required: [id, guestId, period, amount, status, voucherUrl, createdAt]
+      description: A payment without its voucher URL — what lists and the guest's own responses carry
+      required: [id, guestId, amount, status, createdAt]
       properties:
         id: { type: string, format: uuid }
         guestId: { type: string, format: uuid }
-        period: { type: string, example: "2026-09" }
-        amount: { type: number }
+        contractId: { type: string, format: uuid, nullable: true, description: "The contract the period belongs to; null for a temporary guest" }
+        stayId: { type: string, format: uuid, nullable: true, description: "The stay a temporary guest paid for; null for a guest with a contract" }
+        period: { type: string, nullable: true, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09", description: "null for a temporary guest (RN-03)" }
+        amount: { type: number, description: "Declared amount, in soles" }
+        paymentMethod: { type: string, nullable: true, description: "Free text per payment (RN-28)" }
+        status: { type: string, enum: [PENDING, APPROVED, REJECTED] }
+        rejectionReason: { type: string, nullable: true, description: "Shown to the guest in the app only, never by email (D-34d)" }
+        reviewedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    Payment:
+      type: object
+      description: A payment with its signed voucher URL (admin detail, `getPayment`)
+      required: [id, guestId, amount, status, voucherUrl, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        guestId: { type: string, format: uuid }
+        contractId: { type: string, format: uuid, nullable: true }
+        stayId: { type: string, format: uuid, nullable: true }
+        period: { type: string, nullable: true, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09" }
+        amount: { type: number, description: "Declared amount, in soles" }
         paymentMethod: { type: string, nullable: true, description: "Free text per payment (RN-28)" }
         status: { type: string, enum: [PENDING, APPROVED, REJECTED] }
         rejectionReason: { type: string, nullable: true }
-        voucherUrl: { type: string, description: "R2 signed URL — every payment has a voucher, no exceptions (RN-22, includes admin-direct payments per RN-23)" }
+        reviewedAt: { type: string, format: date-time, nullable: true }
+        voucherUrl: { type: string, description: "R2 signed URL, expires in 15 min; signed when the payment is requested, never stored — every payment has a voucher, no exceptions (RN-22, includes admin-direct payments per RN-23)" }
         createdAt: { type: string, format: date-time }
+
+    PagedPayments:
+      type: object
+      required: [content, nextCursor]
+      properties:
+        content: { type: array, items: { $ref: "#/components/schemas/PaymentSummary" } }
+        nextCursor: { $ref: "#/components/schemas/NextCursor" }
+
+    PaymentQueueItem:
+      type: object
+      description: A row of the review queue (A5); it does not show the amount
+      required: [id, guestId, guestType, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        guestId: { type: string, format: uuid }
+        guestName: { type: string, nullable: true, description: "null while the guest has not given a name in the onboarding" }
+        documentNumber: { type: string }
+        guestType: { type: string, enum: [CONTRACT, TEMPORARY] }
+        environmentCode: { type: string, nullable: true, description: "null for a temporary guest (shown as Temporal)" }
+        period: { type: string, nullable: true, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09" }
+        status: { type: string, enum: [PENDING, APPROVED, REJECTED] }
+        createdAt: { type: string, format: date-time, description: "When the voucher was uploaded" }
+
+    PagedPaymentQueue:
+      type: object
+      required: [content, nextCursor]
+      properties:
+        content: { type: array, items: { $ref: "#/components/schemas/PaymentQueueItem" } }
+        nextCursor: { $ref: "#/components/schemas/NextCursor" }
 
     PeriodStatus:
       type: object
-      required: [period, status]
+      required: [period, status, dueDate, amount, contractId]
       properties:
-        period: { type: string, example: "2026-09" }
+        period: { type: string, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09" }
         status: { type: string, enum: [PAID, UNDER_REVIEW, UNPAID, OVERDUE] }
+        dueDate: { type: string, format: date, description: "Payment day of the month, or its last day when the month is shorter (RN-10); the grace days come on top" }
+        amount: { type: number, description: "Monthly amount of the contract" }
+        contractId: { type: string, format: uuid }
+        paymentId: { type: string, format: uuid, nullable: true, description: "The live or last payment of the period, if any" }
+        rejectionReason: { type: string, nullable: true, description: "Reason of the last rejected voucher while no other payment is alive (D-34d); a rejected period stays UNPAID or OVERDUE" }
+
+    StayPaymentStatus:
+      type: object
+      description: Payment status of one stay of a temporary guest (CU-21)
+      required: [stayId, startDate, endDate, status]
+      properties:
+        stayId: { type: string, format: uuid }
+        startDate: { type: string, format: date }
+        endDate: { type: string, format: date }
+        status: { type: string, enum: [PAID, UNDER_REVIEW, UNPAID, OVERDUE], description: "OVERDUE once the exit date has passed without an approved payment" }
+        agreedAmount: { type: number }
+        paymentId: { type: string, format: uuid, nullable: true }
+        rejectionReason: { type: string, nullable: true }
+
+    VoucherAlreadyExistsError:
+      type: object
+      description: A voucher is already pending for the period or the stay (RN-15, RN-03). The `code` is always `VOUCHER_ALREADY_EXISTS`
+      required: [code, message]
+      properties:
+        code: { type: string, enum: [VOUCHER_ALREADY_EXISTS] }
+        message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+
+    PaymentAlreadyExistsForPeriodError:
+      type: object
+      description: The period or the stay already has an approved payment (RN-02, D-28). The `code` is always `PAYMENT_ALREADY_EXISTS_FOR_PERIOD`
+      required: [code, message]
+      properties:
+        code: { type: string, enum: [PAYMENT_ALREADY_EXISTS_FOR_PERIOD] }
+        message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+
+    PaymentAlreadyResolvedError:
+      type: object
+      description: Another process resolved the payment first. The `code` is always `PAYMENT_ALREADY_RESOLVED`
+      required: [code, message]
+      properties:
+        code: { type: string, enum: [PAYMENT_ALREADY_RESOLVED] }
+        message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
 
     ExpenseInput:
       type: object
