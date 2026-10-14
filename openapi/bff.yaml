@@ -980,6 +980,9 @@ paths:
               description: >
                 Send exactly one of `period` (a guest with a contract) or `stayId` (a temporary
                 guest, whose single payment belongs to a stay, RN-03).
+              oneOf:
+                - required: [period]
+                - required: [stayId]
               properties:
                 file: { type: string, format: binary, description: "JPG/PNG/PDF, ≤5MB, checked by content (RF-15)" }
                 guestId: { type: string, format: uuid }
@@ -2524,7 +2527,7 @@ components:
     PaymentQueueItem:
       type: object
       description: A row of the review queue (A5); it does not show the amount
-      required: [id, guestId, guestType, status, createdAt]
+      required: [id, guestId, documentNumber, guestType, status, createdAt]
       properties:
         id: { type: string, format: uuid }
         guestId: { type: string, format: uuid }
@@ -2558,7 +2561,7 @@ components:
     StayPaymentStatus:
       type: object
       description: Payment status of one stay of a temporary guest (CU-21)
-      required: [stayId, startDate, endDate, status]
+      required: [stayId, startDate, endDate, status, agreedAmount]
       properties:
         stayId: { type: string, format: uuid }
         startDate: { type: string, format: date }
