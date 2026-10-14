@@ -2072,9 +2072,9 @@ components:
         phone: { type: string, nullable: true }
         contactEmail: { type: string, nullable: true }
         emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
-        stayStartDate: { type: string, format: date, description: "Only when type=TEMPORARY", deprecated: true }
-        stayEndDate: { type: string, format: date, description: "Only when type=TEMPORARY", deprecated: true }
-        agreedAmount: { type: number, description: "Only when type=TEMPORARY", deprecated: true }
+        stayStartDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
+        stayEndDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
+        agreedAmount: { type: number, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
         documentCount: { type: integer, minimum: 0, maximum: 5 }
         accessExpiresAt: { type: string, format: date-time, nullable: true, description: "Expiry of the current unused access, if there is one" }
         contract: { $ref: "#/components/schemas/Contract" }
@@ -2098,9 +2098,9 @@ components:
         phone: { type: string, nullable: true }
         contactEmail: { type: string, nullable: true }
         emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
-        stayStartDate: { type: string, format: date, description: "Only when type=TEMPORARY", deprecated: true }
-        stayEndDate: { type: string, format: date, description: "Only when type=TEMPORARY", deprecated: true }
-        agreedAmount: { type: number, description: "Only when type=TEMPORARY", deprecated: true }
+        stayStartDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
+        stayEndDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
+        agreedAmount: { type: number, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
         documentCount: { type: integer, minimum: 0, maximum: 5 }
         accessExpiresAt: { type: string, format: date-time, nullable: true, description: "Expiry of the current unused access, if there is one" }
         contract: { $ref: "#/components/schemas/Contract" }
@@ -2124,9 +2124,9 @@ components:
         phone: { type: string }
         contactEmail: { type: string, nullable: true }
         emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
-        stayStartDate: { type: string, format: date, description: "Only when type=TEMPORARY", deprecated: true }
-        stayEndDate: { type: string, format: date, description: "Only when type=TEMPORARY", deprecated: true }
-        agreedAmount: { type: number, description: "Only when type=TEMPORARY", deprecated: true }
+        stayStartDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
+        stayEndDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
+        agreedAmount: { type: number, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
         documentCount: { type: integer, minimum: 0, maximum: 5 }
         accessExpiresAt: { type: string, format: date-time, nullable: true, description: "Expiry of the current unused access, if there is one" }
         contract: { $ref: "#/components/schemas/Contract" }
@@ -2150,9 +2150,9 @@ components:
         phone: { type: string }
         contactEmail: { type: string, nullable: true }
         emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
-        stayStartDate: { type: string, format: date, description: "Only when type=TEMPORARY", deprecated: true }
-        stayEndDate: { type: string, format: date, description: "Only when type=TEMPORARY", deprecated: true }
-        agreedAmount: { type: number, description: "Only when type=TEMPORARY", deprecated: true }
+        stayStartDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
+        stayEndDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
+        agreedAmount: { type: number, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
         documentCount: { type: integer, minimum: 0, maximum: 5 }
         accessExpiresAt: { type: string, format: date-time, nullable: true, description: "Expiry of the current unused access, if there is one" }
         contract: { $ref: "#/components/schemas/Contract" }
@@ -2175,9 +2175,9 @@ components:
         phone: { type: string, nullable: true }
         contactEmail: { type: string, nullable: true }
         emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
-        stayStartDate: { type: string, format: date, description: "Only when type=TEMPORARY", deprecated: true }
-        stayEndDate: { type: string, format: date, description: "Only when type=TEMPORARY", deprecated: true }
-        agreedAmount: { type: number, description: "Only when type=TEMPORARY", deprecated: true }
+        stayStartDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
+        stayEndDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
+        agreedAmount: { type: number, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
         documentCount: { type: integer, minimum: 0, maximum: 5 }
         accessExpiresAt: { type: string, format: date-time, nullable: true, description: "Expiry of the current unused access, if there is one" }
         contract: { $ref: "#/components/schemas/Contract" }
