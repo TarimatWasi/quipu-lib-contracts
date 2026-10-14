@@ -783,16 +783,23 @@ paths:
       operationId: listContracts
       tags: [admin-contracts]
       summary: List contracts with validity status (RF-09, CU-07)
+      description: >
+        Newest first. The list carries no `fileUrl` (a signed URL per row would sign N files);
+        ask `getContract` for the file of one contract. `status` is derived from the dates at
+        the time of the request (America/Lima), so EXPIRED needs no job (RN-07).
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       parameters:
         - name: status
           in: query
           schema: { type: string, enum: [ACTIVE, EXPIRED, TERMINATED] }
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/After"
       responses:
         "200":
-          description: Contract list
-          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Contract" } } } }
+          description: Contract page
+          content: { application/json: { schema: { $ref: "#/components/schemas/PagedContracts" } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
     post:
       operationId: createContract
@@ -811,27 +818,36 @@ paths:
                 file: { type: string, format: binary, description: "PDF, ≤10MB (RF-15)" }
                 environmentId: { type: string, format: uuid }
                 guestId: { type: string, format: uuid }
-                monthlyAmount: { type: number }
+                monthlyAmount: { type: number, exclusiveMinimum: true, minimum: 0, maximum: 99999999.99, multipleOf: 0.01, description: "In soles, greater than 0, at most two decimals" }
                 paymentDay: { type: integer, minimum: 1, maximum: 31 }
-                graceDays: { type: integer, minimum: 0 }
+                graceDays: { type: integer, minimum: 0, maximum: 31 }
                 startDate: { type: string, format: date }
-                endDate: { type: string, format: date, description: "optional; omitted means an open-ended contract (RN-07)" }
+                endDate: { type: string, format: date, description: "optional; omitted means an open-ended contract (RN-07); when present it must be after `startDate`" }
       responses:
         "201":
           description: Contract created
           content: { application/json: { schema: { $ref: "#/components/schemas/Contract" } } }
-        "400": { description: "Invalid file, end date before start date, etc." }
+        "400":
+          description: >
+            `CONTRACT_INVALID_FILE` (not a PDF by content, or over 10 MB, RF-15),
+            `CONTRACT_INVALID_DATES` (the end date is not after the start date, RF-03) or
+            `VALIDATION_ERROR` (any other field, with its `field`)
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "401": { $ref: "#/components/responses/NoSession" }
+        "404": { description: "The environment or the guest does not exist (`RESOURCE_NOT_FOUND`)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "409":
           description: >
-            `GUEST_NOT_ACTIVE` (the guest is not active, RN-35), `GUEST_HAS_PENDING_DEBT`
-            (the guest owes periods, RN-25) or `ENVIRONMENT_OCCUPIED` (the environment already has
-            a contract in force, RN-20)
+            `GUEST_NOT_ACTIVE` (the guest is not active, RN-35), `GUEST_NOT_CONTRACT` (only a
+            guest of type CONTRACT takes a contract, the temporary one has stays, RN-13),
+            `GUEST_HAS_PENDING_DEBT` (the guest owes periods, RN-25) or `ENVIRONMENT_OCCUPIED`
+            (the environment already has a contract in force, RN-20). The check order is: guest
+            state, guest type, debt, environment
           content:
             application/json:
               schema:
                 anyOf:
                   - $ref: "#/components/schemas/GuestNotActiveError"
+                  - $ref: "#/components/schemas/GuestNotContractError"
                   - $ref: "#/components/schemas/GuestHasPendingDebtError"
                   - $ref: "#/components/schemas/EnvironmentOccupiedError"
         "429": { $ref: "#/components/responses/TooManyRequests" }
@@ -856,6 +872,7 @@ paths:
       operationId: terminateContract
       tags: [admin-contracts]
       summary: Manually terminate contract (RN-25, CU-12) — the debt does not block it, and the guest keeps owing the periods until they are paid
+      description: Idempotent — a contract that is already terminated or expired answers 204 and stays as it is
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       parameters: [{ $ref: "#/components/parameters/Id" }]
@@ -2312,7 +2329,38 @@ components:
         startDate: { type: string, format: date }
         endDate: { type: string, format: date, nullable: true, description: "null means an open-ended contract (RN-07)" }
         status: { type: string, enum: [ACTIVE, EXPIRED, TERMINATED] }
-        fileUrl: { type: string, description: "R2 signed URL, expires in 15 min" }
+        fileUrl: { type: string, description: "R2 signed URL, expires in 15 min; signed when the contract is requested, never stored" }
+
+    ContractSummary:
+      type: object
+      description: A contract in a list, without the signed file URL
+      required: [id, environmentId, guestId, monthlyAmount, paymentDay, graceDays, startDate, status]
+      properties:
+        id: { type: string, format: uuid }
+        environmentId: { type: string, format: uuid }
+        guestId: { type: string, format: uuid }
+        monthlyAmount: { type: number }
+        paymentDay: { type: integer }
+        graceDays: { type: integer }
+        startDate: { type: string, format: date }
+        endDate: { type: string, format: date, nullable: true, description: "null means an open-ended contract (RN-07)" }
+        status: { type: string, enum: [ACTIVE, EXPIRED, TERMINATED] }
+        expiringSoon: { type: boolean, description: "ACTIVE with 30 days or fewer to the end date (RF-09, D-27); false when open-ended" }
+
+    PagedContracts:
+      type: object
+      required: [content, nextCursor]
+      properties:
+        content: { type: array, items: { $ref: "#/components/schemas/ContractSummary" } }
+        nextCursor: { $ref: "#/components/schemas/NextCursor" }
+
+    GuestNotContractError:
+      type: object
+      description: Only a guest of type CONTRACT takes a contract (RN-13). The `code` is always `GUEST_NOT_CONTRACT`
+      required: [code, message]
+      properties:
+        code: { type: string, enum: [GUEST_NOT_CONTRACT] }
+        message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
 
     Payment:
       type: object
