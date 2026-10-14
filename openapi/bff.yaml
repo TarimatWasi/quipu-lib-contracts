@@ -1525,7 +1525,9 @@ paths:
         "401": { $ref: "#/components/responses/NoSession" }
         "403":
           description: >
-            `VOUCHER_NO_ACTIVE_STAY` (the guest has no stay in force or coming, CU-22) or
+            `VOUCHER_NO_ACTIVE_STAY` (the guest has no stay in force or coming, CU-22),
+            `AUTH_ONBOARDING_REQUIRED` (the onboarding is not complete, RN-33),
+            `AUTH_PASSWORD_CHANGE_REQUIRED` (temporary password not changed, RF-12) or
             `AUTH_FORBIDDEN` (a guest of the other type, RN-09)
           content:
             application/json:
