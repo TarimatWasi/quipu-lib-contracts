@@ -854,7 +854,7 @@ paths:
                   - $ref: "#/components/schemas/GuestNotContractError"
                   - $ref: "#/components/schemas/GuestHasPendingDebtError"
                   - $ref: "#/components/schemas/EnvironmentOccupiedError"
-        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/FileStorageUnavailable" }
 
   /admin/contracts/{id}:
     get:
@@ -872,6 +872,7 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/Contract" } } }
         "401": { $ref: "#/components/responses/NoSession" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/FileStorageUnavailable" }
 
   /admin/contracts/{id}/terminate:
     post:
@@ -1022,7 +1023,7 @@ paths:
                   - $ref: "#/components/schemas/GuestNotActiveError"
                   - $ref: "#/components/schemas/PaymentAlreadyExistsForPeriodError"
                   - $ref: "#/components/schemas/VoucherAlreadyExistsError"
-        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/FileStorageUnavailable" }
 
   /admin/payments/{id}:
     get:
@@ -1042,6 +1043,7 @@ paths:
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/FileStorageUnavailable" }
     patch:
       operationId: resolvePayment
       tags: [admin-payments]
@@ -1247,6 +1249,7 @@ paths:
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/GuestAccessDenied" }
         "404": { description: "No contract was ever associated with this guest" }
+        "503": { $ref: "#/components/responses/FileStorageUnavailable" }
 
   /guest/payments:
     get:
@@ -1319,7 +1322,7 @@ paths:
                   - $ref: "#/components/schemas/GuestNotActiveError"
                   - $ref: "#/components/schemas/PaymentAlreadyExistsForPeriodError"
                   - $ref: "#/components/schemas/VoucherAlreadyExistsError"
-        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/FileStorageUnavailable" }
 
   /guest/profile:
     patch:
@@ -1554,7 +1557,7 @@ paths:
                   - $ref: "#/components/schemas/GuestNotActiveError"
                   - $ref: "#/components/schemas/PaymentAlreadyExistsForPeriodError"
                   - $ref: "#/components/schemas/VoucherAlreadyExistsError"
-        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/FileStorageUnavailable" }
 
   /temporary-guest/profile:
     patch:
@@ -1708,6 +1711,11 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
+    FileStorageUnavailable:
+      description: "The file storage (R2) is not configured or failed; nothing was saved — retry later (`FILE_STORAGE_UNAVAILABLE`)"
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/FileStorageUnavailableError" }
     GuestInactive:
       description: >
         The guest is inactive (RN-12, RN-18). The `code` is always
@@ -2496,17 +2504,27 @@ components:
         code: { type: string, enum: [GUEST_NOT_CONTRACT] }
         message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
 
+    FileStorageUnavailableError:
+      type: object
+      description: The file storage could not store or sign the file. The `code` is always `FILE_STORAGE_UNAVAILABLE`
+      required: [code, message]
+      properties:
+        code: { type: string, enum: [FILE_STORAGE_UNAVAILABLE] }
+        message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+
     PaymentSummary:
       type: object
       description: A payment without its voucher URL — what lists and the guest's own responses carry
       required: [id, guestId, contractId, stayId, period, amount, status, createdAt]
       oneOf:
         - description: A period of a contract (guest with a contract)
+          additionalProperties: true
           properties:
             contractId: { type: string }
             period: { type: string }
             stayId: { type: string, nullable: true, enum: [null] }
         - description: The stay of a temporary guest
+          additionalProperties: true
           properties:
             stayId: { type: string }
             contractId: { type: string, nullable: true, enum: [null] }
@@ -2530,11 +2548,13 @@ components:
       required: [id, guestId, contractId, stayId, period, amount, status, voucherUrl, createdAt]
       oneOf:
         - description: A period of a contract (guest with a contract)
+          additionalProperties: true
           properties:
             contractId: { type: string }
             period: { type: string }
             stayId: { type: string, nullable: true, enum: [null] }
         - description: The stay of a temporary guest
+          additionalProperties: true
           properties:
             stayId: { type: string }
             contractId: { type: string, nullable: true, enum: [null] }
@@ -2566,11 +2586,13 @@ components:
       required: [id, guestId, guestName, documentNumber, guestType, environmentCode, period, status, createdAt]
       oneOf:
         - description: A guest with a contract, with its environment and period
+          additionalProperties: true
           properties:
             guestType: { type: string, enum: [CONTRACT] }
             environmentCode: { type: string }
             period: { type: string }
         - description: A temporary guest, with no environment and no period (shown as Temporal)
+          additionalProperties: true
           properties:
             guestType: { type: string, enum: [TEMPORARY] }
             environmentCode: { type: string, nullable: true, enum: [null] }
