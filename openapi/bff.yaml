@@ -819,7 +819,7 @@ paths:
               type: object
               required: [file, environmentId, guestId, monthlyAmount, paymentDay, graceDays, startDate]
               properties:
-                file: { type: string, format: binary, description: "PDF, ≤10MB (RF-15)" }
+                file: { type: string, format: binary, description: "PDF, ≤10MB, checked by content (RF-15)" }
                 environmentId: { type: string, format: uuid }
                 guestId: { type: string, format: uuid }
                 monthlyAmount: { type: number, exclusiveMinimum: true, minimum: 0, maximum: 99999999.99, multipleOf: 0.01, description: "In soles, greater than 0, at most two decimals" }
@@ -838,6 +838,7 @@ paths:
             `VALIDATION_ERROR` (any other field, with its `field`)
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { description: "The environment or the guest does not exist (`RESOURCE_NOT_FOUND`)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "409":
           description: >
@@ -1010,6 +1011,7 @@ paths:
             or neither of period and stayId)
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { description: "The guest or the stay does not exist (`RESOURCE_NOT_FOUND`)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "409":
           description: >
@@ -1301,7 +1303,7 @@ paths:
             `VOUCHER_NO_ACTIVE_CONTRACT` (no active contract, RN-27),
             `AUTH_ONBOARDING_REQUIRED` (the onboarding is not complete, RN-33),
             `AUTH_PASSWORD_CHANGE_REQUIRED` (temporary password not changed,
-            RF-12) or `AUTH_FORBIDDEN` (a guest of the other type, RN-09)
+            RF-12) or `AUTH_FORBIDDEN` (a guest of the other type, RN-09). On the multipart upload, `AUTH_FORBIDDEN` is also returned when the request carries neither an `Origin` header nor `Sec-Fetch-Site: same-origin` (ADR-006)
           content:
             application/json:
               schema:
@@ -1418,7 +1420,7 @@ paths:
               type: object
               required: [file]
               properties:
-                file: { type: string, format: binary, description: "JPG/PNG/PDF, ≤5MB (RF-15)" }
+                file: { type: string, format: binary, description: "JPG/PNG/PDF, ≤5MB, checked by content (RF-15)" }
       responses:
         "201":
           description: Document stored
@@ -1537,7 +1539,7 @@ paths:
             `VOUCHER_NO_ACTIVE_STAY` (the guest has no stay in force or coming, CU-22),
             `AUTH_ONBOARDING_REQUIRED` (the onboarding is not complete, RN-33),
             `AUTH_PASSWORD_CHANGE_REQUIRED` (temporary password not changed, RF-12) or
-            `AUTH_FORBIDDEN` (a guest of the other type, RN-09)
+            `AUTH_FORBIDDEN` (a guest of the other type, RN-09). On the multipart upload, `AUTH_FORBIDDEN` is also returned when the request carries neither an `Origin` header nor `Sec-Fetch-Site: same-origin` (ADR-006)
           content:
             application/json:
               schema:
@@ -1631,7 +1633,10 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
     Forbidden:
-      description: The session is valid but its role cannot use the operation (RN-08, RN-09). The `code` is always `AUTH_FORBIDDEN`
+      description: >
+        The session is valid but its role cannot use the operation (RN-08, RN-09). On the
+        multipart uploads it is also returned when the request carries neither an `Origin`
+        header nor `Sec-Fetch-Site: same-origin` (ADR-006). The `code` is always `AUTH_FORBIDDEN`
       content:
         application/json:
           schema:
@@ -1729,7 +1734,7 @@ components:
         A guest session that cannot use the onboarding operation. The `code` is
         `AUTH_PASSWORD_CHANGE_REQUIRED` while a temporary password has not been
         changed (RF-12) or `AUTH_FORBIDDEN` for the administrator. Never
-        `AUTH_ONBOARDING_REQUIRED`: these are the routes an incomplete guest must reach
+        `AUTH_ONBOARDING_REQUIRED`: these are the routes an incomplete guest must reach. On the multipart upload, `AUTH_FORBIDDEN` is also returned when the request carries neither an `Origin` header nor `Sec-Fetch-Site: same-origin` (ADR-006)
       content:
         application/json:
           schema:
