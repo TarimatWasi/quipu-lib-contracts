@@ -746,6 +746,10 @@ paths:
       description: >
         Only the administrator sees these files. Each `url` is a signed R2
         link that expires 5 minutes after the response; ask again for a new one.
+        A document is never deleted or replaced, except on an ARCO request of
+        the holder or an upload error (RN-37), only by an administrator and
+        with evidence (`deleteGuestDocument`, `replaceGuestDocument`,
+        `listGuestDocumentActions`).
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       parameters: [{ $ref: "#/components/parameters/Id" }]
@@ -757,6 +761,129 @@ paths:
           content:
             application/json:
               schema: { type: array, maxItems: 5, items: { $ref: "#/components/schemas/GuestDocument" } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /admin/guests/{id}/documents/{documentId}:
+    put:
+      operationId: replaceGuestDocument
+      tags: [admin-guests]
+      summary: Replace a document of the guest on an ARCO request or an upload error, with evidence (RN-37)
+      description: >
+        Only for an ARCO request of the holder or an upload error (RN-37).
+        Stores the new file, deletes the previous file and its row, and leaves
+        an evidence entry (`REPLACE`) with the administrator and the instant
+        (`listGuestDocumentActions`). The new document gets a new `id`. The same
+        rules as `DocumentActionRequest` apply to `reason`, `requestedAt`,
+        `requestChannel` and `note`: `requestedAt` and `requestChannel` are
+        required when `reason` is `ARCO_REQUEST`. Never cacheable
+        (`Cache-Control: no-store`).
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - { $ref: "#/components/parameters/DocumentId" }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, reason]
+              additionalProperties: false
+              description: >
+                `requestedAt` and `requestChannel` are required when `reason` is
+                `ARCO_REQUEST` (OpenAPI 3.0 cannot express the condition). An unknown
+                field is a 400 `DOCUMENT_INVALID_FILE`.
+              properties:
+                file: { type: string, format: binary, description: "JPG/PNG/PDF, ≤5MB, checked by content (RF-15)" }
+                reason: { $ref: "#/components/schemas/DocumentActionReason" }
+                requestedAt: { type: string, format: date, description: "Date the holder made the request; required when reason=ARCO_REQUEST" }
+                requestChannel: { $ref: "#/components/schemas/DocumentRequestChannel" }
+                note: { type: string, maxLength: 500 }
+      responses:
+        "200":
+          description: Document replaced; the response is the new document, with a new `id`
+          headers:
+            Cache-Control: { required: true, schema: { type: string, enum: ["no-store"] } }
+          content: { application/json: { schema: { $ref: "#/components/schemas/GuestDocument" } } }
+        "400":
+          description: >
+            `DOCUMENT_INVALID_FILE` (not JPG, PNG or PDF by content, over 5 MB, or an
+            unknown multipart field, RF-15) or `VALIDATION_ERROR` (any other field, with
+            its `field`: reason, requestedAt, requestChannel or note)
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403":
+          description: >
+            `AUTH_FORBIDDEN`: the session is not an administrator (RN-08), or the request
+            carries neither an `Origin` header nor `Sec-Fetch-Site: same-origin`, or they
+            name another site (ADR-006). This is the sixth route of the exact set of
+            multipart routes under that check: `createContract`, `createDirectPayment`,
+            `uploadPaymentVoucher`, `uploadOnboardingDocument`, `uploadTemporaryVoucher` and
+            `replaceGuestDocument`
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, message]
+                properties:
+                  code: { type: string, enum: [AUTH_FORBIDDEN] }
+                  message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+        "404": { $ref: "#/components/responses/GuestDocumentNotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/FileStorageUnavailable" }
+    delete:
+      operationId: deleteGuestDocument
+      tags: [admin-guests]
+      summary: Delete a document of the guest on an ARCO request or an upload error, with evidence (RN-37)
+      description: >
+        Only for an ARCO request of the holder or an upload error (RN-37).
+        Physically deletes the file and its row, and leaves an evidence entry
+        (`DELETE`) with the administrator and the instant
+        (`listGuestDocumentActions`). Never cacheable (`Cache-Control: no-store`).
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - { $ref: "#/components/parameters/DocumentId" }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/DocumentActionRequest" } } }
+      responses:
+        "204":
+          description: File and row deleted, evidence entry recorded
+          headers:
+            Cache-Control: { required: true, schema: { type: string, enum: ["no-store"] } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/GuestDocumentNotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/FileStorageUnavailable" }
+
+  /admin/guests/{id}/document-actions:
+    get:
+      operationId: listGuestDocumentActions
+      tags: [admin-guests]
+      summary: Evidence of the deletions and replacements of the guest's documents, newest first (RN-37)
+      description: >
+        Who deleted or replaced which kind of file, when and why. Never carries
+        the file name, the storage key or the content.
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/After" }
+      responses:
+        "200":
+          description: One page of the document actions of the guest, newest first (empty if there is none)
+          headers:
+            Cache-Control: { required: true, schema: { type: string, enum: ["no-store"] } }
+          content: { application/json: { schema: { $ref: "#/components/schemas/PagedGuestDocumentActions" } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -1410,8 +1537,12 @@ paths:
       description: >
         One file per call; repeat for more. At most 5 files per guest, each
         JPG, PNG or PDF of up to 5 MB, checked by real content (SEC-07). The
-        guest never gets the file back: only the administrator sees it. Files
-        are neither deleted nor replaced.
+        guest never gets the file back: only the administrator sees it. The
+        guest can neither delete nor replace a file. The only exception is an
+        ARCO request of the holder or an upload error (RN-37): an administrator
+        deletes or replaces the file (`DELETE` and `PUT
+        /admin/guests/{id}/documents/{documentId}`), and each action leaves an
+        evidence entry with who and when (`GET /admin/guests/{id}/document-actions`).
       security: [{ cookieAuth: [] }]
       x-roles: [GUEST] # either guestType
       requestBody:
@@ -1602,6 +1733,11 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    DocumentId:
+      name: documentId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     Limit:
       name: limit
       in: query
@@ -1715,6 +1851,11 @@ components:
               lockedUntil: { type: string, format: date-time, description: "UTC instant at which the lock ends; the UI shows it in America/Lima" }
     TooManyRequests:
       description: "Rate limit exceeded (SEC-01) — retry after the window in the `Retry-After` header"
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    GuestDocumentNotFound:
+      description: "The guest does not exist, or the document does not belong to that guest (`RESOURCE_NOT_FOUND`)"
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -2384,6 +2525,55 @@ components:
         uploadedAt: { type: string, format: date-time }
         url: { type: string, description: "R2 signed URL, expires 5 minutes after the response (RN-37)" }
         urlExpiresAt: { type: string, format: date-time }
+
+    DocumentActionReason:
+      type: string
+      enum: [ARCO_REQUEST, UPLOAD_ERROR]
+      description: "Why an administrator deleted or replaced a document: an ARCO request of the holder or an upload error (RN-37)"
+
+    DocumentRequestChannel:
+      type: string
+      enum: [WHATSAPP, EMAIL, IN_PERSON, OTHER]
+      description: Channel through which the holder made the ARCO request
+
+    DocumentActionRequest:
+      type: object
+      description: >
+        Why a document is deleted (RN-37). `requestedAt` and `requestChannel` are
+        required when `reason` is `ARCO_REQUEST` (OpenAPI 3.0 cannot express the
+        condition; a missing one is a 400 `VALIDATION_ERROR` with its `field`).
+      required: [reason]
+      additionalProperties: false
+      properties:
+        reason: { $ref: "#/components/schemas/DocumentActionReason" }
+        requestedAt: { type: string, format: date, description: "Date the holder made the request; required when reason=ARCO_REQUEST" }
+        requestChannel: { $ref: "#/components/schemas/DocumentRequestChannel" }
+        note: { type: string, maxLength: 500 }
+
+    GuestDocumentAction:
+      type: object
+      description: >
+        Evidence of one deletion or replacement of a guest document (RN-37). Never
+        carries the file name, the storage key or the content.
+      required: [id, action, reason, requestedAt, requestChannel, note, contentType, sizeBytes, actorId, performedAt]
+      properties:
+        id: { type: string, format: uuid }
+        action: { type: string, enum: [DELETE, REPLACE] }
+        reason: { $ref: "#/components/schemas/DocumentActionReason" }
+        requestedAt: { type: string, format: date, nullable: true, description: "Date the holder made the request; null when it was not given (reason=UPLOAD_ERROR)" }
+        requestChannel: { type: string, nullable: true, enum: [WHATSAPP, EMAIL, IN_PERSON, OTHER, null], description: "null when it was not given (reason=UPLOAD_ERROR)" }
+        note: { type: string, nullable: true, maxLength: 500 }
+        contentType: { type: string, enum: [image/jpeg, image/png, application/pdf], description: "Type of the deleted or replaced file" }
+        sizeBytes: { type: integer, minimum: 1, maximum: 5242880, description: "Size of the deleted or replaced file" }
+        actorId: { type: string, format: uuid, description: "The administrator who performed the action" }
+        performedAt: { type: string, format: date-time }
+
+    PagedGuestDocumentActions:
+      type: object
+      required: [content, nextCursor]
+      properties:
+        content: { type: array, items: { $ref: "#/components/schemas/GuestDocumentAction" } }
+        nextCursor: { $ref: "#/components/schemas/NextCursor" }
 
     OnboardingState:
       description: >
