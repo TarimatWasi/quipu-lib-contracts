@@ -773,15 +773,19 @@ paths:
       description: >
         Only for an ARCO request of the holder or an upload error (RN-37). The
         fields `reason`, `requestedAt`, `requestChannel` and `note` follow the
-        rules of `DocumentActionRequest`. A file over 5 MB is a 400
-        `DOCUMENT_INVALID_FILE`, never a 413.
+        rules of `DocumentActionRequest`; an empty multipart field
+        (`requestedAt=""`, `requestChannel=""`, `note=""` or whitespace only) counts
+        as absent. A file over 5 MB is a 400 `DOCUMENT_INVALID_FILE`, never a 413.
         Order and atomicity: (1) the new object is uploaded to the storage; if
         that fails the answer is 503 `FILE_STORAGE_UNAVAILABLE` and nothing
         changes. (2) In a single transaction the document row is swapped for the
         new one (new `id`) and the evidence entry (`REPLACE`) is inserted; if the
         transaction fails the new object is deleted and nothing changes. (3) After
-        the commit the old object is deleted, with a persistent retry; until then
-        no row references it, so it cannot be reached.
+        the commit the old object is deleted, with a persistent retry; no row
+        references it any more, so no new signed URL is issued for it. A signed URL
+        already handed out for the old object (`listGuestDocuments`) may keep
+        opening it until it expires (at most 5 minutes) or until the old object is
+        deleted, whichever comes first.
         Concurrency: of two actions on the same `documentId` (replace or delete)
         only one wins; the row is taken by `(guest_id, id)` with a row lock or a
         conditional delete, and the loser gets 404 `RESOURCE_NOT_FOUND`.
@@ -801,8 +805,8 @@ paths:
               additionalProperties: false
               description: >
                 The fields other than `file` follow the rules of `DocumentActionRequest`
-                (OpenAPI 3.0 cannot express the conditions). An unknown field is a 400
-                `DOCUMENT_INVALID_FILE`.
+                (OpenAPI 3.0 cannot express the conditions). An empty field counts as
+                absent. An unknown field is a 400 `DOCUMENT_INVALID_FILE`.
               properties:
                 file: { type: string, format: binary, description: "JPG/PNG/PDF, ≤5MB, checked by content (RF-15); over 5 MB is a 400 DOCUMENT_INVALID_FILE, not a 413" }
                 reason: { $ref: "#/components/schemas/DocumentActionReason" }
@@ -825,22 +829,7 @@ paths:
             over 500 characters
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "401": { $ref: "#/components/responses/NoSession" }
-        "403":
-          description: >
-            `AUTH_FORBIDDEN`: the session is not an administrator (RN-08), or the request
-            carries neither an `Origin` header nor `Sec-Fetch-Site: same-origin`, or they
-            name another site (ADR-006). This is the sixth route of the exact set of
-            multipart routes under that check: `createContract`, `createDirectPayment`,
-            `uploadPaymentVoucher`, `uploadOnboardingDocument`, `uploadTemporaryVoucher` and
-            `replaceGuestDocument`
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [code, message]
-                properties:
-                  code: { type: string, enum: [AUTH_FORBIDDEN] }
-                  message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+        "403": { $ref: "#/components/responses/OriginCheckForbidden" }
         "404": { $ref: "#/components/responses/GuestDocumentNotFound" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
         "503": { $ref: "#/components/responses/FileStorageUnavailable" }
@@ -853,11 +842,19 @@ paths:
       description: >
         Only for an ARCO request of the holder or an upload error (RN-37). A `POST`
         with a JSON body instead of a `DELETE` with a body, because proxies and
-        rewrites may drop the body of a `DELETE`.
+        rewrites may drop the body of a `DELETE`. It deletes personal data
+        irreversibly and a `POST` can be sent cross-site without a preflight, so
+        it is under the same `Origin`/`Sec-Fetch-Site` check as the multipart
+        routes (ADR-006, 403), and it only accepts `Content-Type:
+        application/json` (anything else is a 415).
         Order and atomicity: (1) the object is deleted from the storage; if that
         fails the answer is 503 `FILE_STORAGE_UNAVAILABLE`, nothing is deleted and
-        no evidence is written. (2) If it succeeds, in a single transaction the
-        document row is deleted and the evidence entry (`DELETE`) is inserted.
+        no evidence is written. An object that is already missing counts as
+        deleted, so a retry never gets stuck in 503. (2) If it succeeds, in a
+        single transaction the document row is deleted and the evidence entry
+        (`DELETE`) is inserted; if that transaction fails the answer is 500 and the
+        row stays, so the administrator repeats the action and it completes
+        (idempotent: step 1 finds the object missing and goes on to step 2).
         Concurrency: of two actions on the same `documentId` (delete or replace)
         only one wins; the row is taken by `(guest_id, id)` with a row lock or a
         conditional delete, and the loser gets 404 `RESOURCE_NOT_FOUND`.
@@ -883,9 +880,18 @@ paths:
             after today (America/Lima); `note` over 500 characters; or an unknown property
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "401": { $ref: "#/components/responses/NoSession" }
-        "403": { $ref: "#/components/responses/Forbidden" }
+        "403": { $ref: "#/components/responses/OriginCheckForbidden" }
         "404": { $ref: "#/components/responses/GuestDocumentNotFound" }
+        "415":
+          description: "The `Content-Type` is not exactly `application/json` (`UNSUPPORTED_MEDIA_TYPE`)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "429": { $ref: "#/components/responses/TooManyRequests" }
+        "500":
+          description: >
+            The object was deleted from the storage but the transaction that deletes
+            the row and writes the evidence failed; the row stays. Repeat the action:
+            it is idempotent and completes
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "503": { $ref: "#/components/responses/FileStorageUnavailable" }
 
   /admin/guests/{id}/document-actions:
@@ -1885,6 +1891,24 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
+    OriginCheckForbidden:
+      description: >
+        `AUTH_FORBIDDEN`: the session is not an administrator (RN-08), or the request
+        carries neither an `Origin` header nor `Sec-Fetch-Site: same-origin`, or they
+        name another site (ADR-006). `replaceGuestDocument` is the sixth route of the
+        exact set of multipart routes under that check: `createContract`,
+        `createDirectPayment`, `uploadPaymentVoucher`, `uploadOnboardingDocument`,
+        `uploadTemporaryVoucher` and `replaceGuestDocument`. `deleteGuestDocument`
+        is the only JSON route under the same check, because it deletes personal
+        data irreversibly
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [code, message]
+            properties:
+              code: { type: string, enum: [AUTH_FORBIDDEN] }
+              message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
     GuestDocumentNotFound:
       description: >
         The guest does not exist, the document does not belong to that guest, or a
