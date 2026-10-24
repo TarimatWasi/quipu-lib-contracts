@@ -771,14 +771,21 @@ paths:
       tags: [admin-guests]
       summary: Replace a document of the guest on an ARCO request or an upload error, with evidence (RN-37)
       description: >
-        Only for an ARCO request of the holder or an upload error (RN-37).
-        Stores the new file, deletes the previous file and its row, and leaves
-        an evidence entry (`REPLACE`) with the administrator and the instant
-        (`listGuestDocumentActions`). The new document gets a new `id`. The same
-        rules as `DocumentActionRequest` apply to `reason`, `requestedAt`,
-        `requestChannel` and `note`: `requestedAt` and `requestChannel` are
-        required when `reason` is `ARCO_REQUEST`. Never cacheable
-        (`Cache-Control: no-store`).
+        Only for an ARCO request of the holder or an upload error (RN-37). The
+        fields `reason`, `requestedAt`, `requestChannel` and `note` follow the
+        rules of `DocumentActionRequest`. A file over 5 MB is a 400
+        `DOCUMENT_INVALID_FILE`, never a 413.
+        Order and atomicity: (1) the new object is uploaded to the storage; if
+        that fails the answer is 503 `FILE_STORAGE_UNAVAILABLE` and nothing
+        changes. (2) In a single transaction the document row is swapped for the
+        new one (new `id`) and the evidence entry (`REPLACE`) is inserted; if the
+        transaction fails the new object is deleted and nothing changes. (3) After
+        the commit the old object is deleted, with a persistent retry; until then
+        no row references it, so it cannot be reached.
+        Concurrency: of two actions on the same `documentId` (replace or delete)
+        only one wins; the row is taken by `(guest_id, id)` with a row lock or a
+        conditional delete, and the loser gets 404 `RESOURCE_NOT_FOUND`.
+        Never cacheable (`Cache-Control: no-store`).
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       parameters:
@@ -793,15 +800,15 @@ paths:
               required: [file, reason]
               additionalProperties: false
               description: >
-                `requestedAt` and `requestChannel` are required when `reason` is
-                `ARCO_REQUEST` (OpenAPI 3.0 cannot express the condition). An unknown
-                field is a 400 `DOCUMENT_INVALID_FILE`.
+                The fields other than `file` follow the rules of `DocumentActionRequest`
+                (OpenAPI 3.0 cannot express the conditions). An unknown field is a 400
+                `DOCUMENT_INVALID_FILE`.
               properties:
-                file: { type: string, format: binary, description: "JPG/PNG/PDF, ≤5MB, checked by content (RF-15)" }
+                file: { type: string, format: binary, description: "JPG/PNG/PDF, ≤5MB, checked by content (RF-15); over 5 MB is a 400 DOCUMENT_INVALID_FILE, not a 413" }
                 reason: { $ref: "#/components/schemas/DocumentActionReason" }
-                requestedAt: { type: string, format: date, description: "Date the holder made the request; required when reason=ARCO_REQUEST" }
+                requestedAt: { $ref: "#/components/schemas/DocumentRequestedAt" }
                 requestChannel: { $ref: "#/components/schemas/DocumentRequestChannel" }
-                note: { type: string, maxLength: 500 }
+                note: { $ref: "#/components/schemas/DocumentActionNote" }
       responses:
         "200":
           description: Document replaced; the response is the new document, with a new `id`
@@ -811,8 +818,11 @@ paths:
         "400":
           description: >
             `DOCUMENT_INVALID_FILE` (not JPG, PNG or PDF by content, over 5 MB, or an
-            unknown multipart field, RF-15) or `VALIDATION_ERROR` (any other field, with
-            its `field`: reason, requestedAt, requestChannel or note)
+            unknown multipart field, RF-15) or `VALIDATION_ERROR` with its `field`:
+            `reason` missing or unknown; with `ARCO_REQUEST`, `requestedAt` or
+            `requestChannel` missing; with `UPLOAD_ERROR`, `requestedAt` or
+            `requestChannel` present; `requestedAt` after today (America/Lima); `note`
+            over 500 characters
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "401": { $ref: "#/components/responses/NoSession" }
         "403":
@@ -834,15 +844,24 @@ paths:
         "404": { $ref: "#/components/responses/GuestDocumentNotFound" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
         "503": { $ref: "#/components/responses/FileStorageUnavailable" }
-    delete:
+
+  /admin/guests/{id}/documents/{documentId}/deletion:
+    post:
       operationId: deleteGuestDocument
       tags: [admin-guests]
       summary: Delete a document of the guest on an ARCO request or an upload error, with evidence (RN-37)
       description: >
-        Only for an ARCO request of the holder or an upload error (RN-37).
-        Physically deletes the file and its row, and leaves an evidence entry
-        (`DELETE`) with the administrator and the instant
-        (`listGuestDocumentActions`). Never cacheable (`Cache-Control: no-store`).
+        Only for an ARCO request of the holder or an upload error (RN-37). A `POST`
+        with a JSON body instead of a `DELETE` with a body, because proxies and
+        rewrites may drop the body of a `DELETE`.
+        Order and atomicity: (1) the object is deleted from the storage; if that
+        fails the answer is 503 `FILE_STORAGE_UNAVAILABLE`, nothing is deleted and
+        no evidence is written. (2) If it succeeds, in a single transaction the
+        document row is deleted and the evidence entry (`DELETE`) is inserted.
+        Concurrency: of two actions on the same `documentId` (delete or replace)
+        only one wins; the row is taken by `(guest_id, id)` with a row lock or a
+        conditional delete, and the loser gets 404 `RESOURCE_NOT_FOUND`.
+        Never cacheable (`Cache-Control: no-store`).
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       parameters:
@@ -856,7 +875,13 @@ paths:
           description: File and row deleted, evidence entry recorded
           headers:
             Cache-Control: { required: true, schema: { type: string, enum: ["no-store"] } }
-        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "400":
+          description: >
+            `VALIDATION_ERROR` with its `field`: `reason` missing or unknown; with
+            `ARCO_REQUEST`, `requestedAt` or `requestChannel` missing; with
+            `UPLOAD_ERROR`, `requestedAt` or `requestChannel` present; `requestedAt`
+            after today (America/Lima); `note` over 500 characters; or an unknown property
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/GuestDocumentNotFound" }
@@ -869,8 +894,8 @@ paths:
       tags: [admin-guests]
       summary: Evidence of the deletions and replacements of the guest's documents, newest first (RN-37)
       description: >
-        Who deleted or replaced which kind of file, when and why. Never carries
-        the file name, the storage key or the content.
+        Who deleted or replaced which document, when and why. Never carries the
+        file name, the storage key or the content.
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       parameters:
@@ -887,6 +912,7 @@ paths:
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /admin/guests/{id}/payments:
     get:
@@ -1540,7 +1566,8 @@ paths:
         guest never gets the file back: only the administrator sees it. The
         guest can neither delete nor replace a file. The only exception is an
         ARCO request of the holder or an upload error (RN-37): an administrator
-        deletes or replaces the file (`DELETE` and `PUT
+        deletes or replaces the file (`POST
+        /admin/guests/{id}/documents/{documentId}/deletion` and `PUT
         /admin/guests/{id}/documents/{documentId}`), and each action leaves an
         evidence entry with who and when (`GET /admin/guests/{id}/document-actions`).
       security: [{ cookieAuth: [] }]
@@ -1851,11 +1878,19 @@ components:
               lockedUntil: { type: string, format: date-time, description: "UTC instant at which the lock ends; the UI shows it in America/Lima" }
     TooManyRequests:
       description: "Rate limit exceeded (SEC-01) — retry after the window in the `Retry-After` header"
+      headers:
+        Retry-After:
+          description: Seconds until the client may retry
+          schema: { type: integer, minimum: 1 }
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
     GuestDocumentNotFound:
-      description: "The guest does not exist, or the document does not belong to that guest (`RESOURCE_NOT_FOUND`)"
+      description: >
+        The guest does not exist, the document does not belong to that guest, or a
+        concurrent action on the same document won (`RESOURCE_NOT_FOUND`). A single
+        lookup by `(guest_id, id)` answers all cases with the same `message`, so the
+        response does not reveal whether the guest or the document exists
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -2536,33 +2571,52 @@ components:
       enum: [WHATSAPP, EMAIL, IN_PERSON, OTHER]
       description: Channel through which the holder made the ARCO request
 
+    DocumentRequestedAt:
+      type: string
+      format: date
+      description: >
+        Date the holder made the ARCO request, on or before today (America/Lima).
+        Required with `ARCO_REQUEST`; not allowed with `UPLOAD_ERROR`
+
+    DocumentActionNote:
+      type: string
+      maxLength: 500
+      description: >
+        Only a reference (ticket or channel); no personal data of the holder. It
+        is never logged. Empty or whitespace only counts as absent (stored as null)
+
     DocumentActionRequest:
       type: object
       description: >
-        Why a document is deleted (RN-37). `requestedAt` and `requestChannel` are
-        required when `reason` is `ARCO_REQUEST` (OpenAPI 3.0 cannot express the
-        condition; a missing one is a 400 `VALIDATION_ERROR` with its `field`).
+        Why a document is deleted or replaced (RN-37). OpenAPI 3.0 cannot express
+        the conditions, so they are listed here; each one broken is a 400
+        `VALIDATION_ERROR` with its `field`. With `ARCO_REQUEST`, `requestedAt`
+        and `requestChannel` are both required. With `UPLOAD_ERROR`, neither may
+        be sent. `requestedAt` is on or before today (America/Lima). An empty or
+        whitespace-only `note` counts as null.
       required: [reason]
       additionalProperties: false
       properties:
         reason: { $ref: "#/components/schemas/DocumentActionReason" }
-        requestedAt: { type: string, format: date, description: "Date the holder made the request; required when reason=ARCO_REQUEST" }
+        requestedAt: { $ref: "#/components/schemas/DocumentRequestedAt" }
         requestChannel: { $ref: "#/components/schemas/DocumentRequestChannel" }
-        note: { type: string, maxLength: 500 }
+        note: { $ref: "#/components/schemas/DocumentActionNote" }
 
     GuestDocumentAction:
       type: object
       description: >
         Evidence of one deletion or replacement of a guest document (RN-37). Never
         carries the file name, the storage key or the content.
-      required: [id, action, reason, requestedAt, requestChannel, note, contentType, sizeBytes, actorId, performedAt]
+      required: [id, action, documentId, replacementDocumentId, reason, requestedAt, requestChannel, note, contentType, sizeBytes, actorId, performedAt]
       properties:
         id: { type: string, format: uuid }
         action: { type: string, enum: [DELETE, REPLACE] }
+        documentId: { type: string, format: uuid, description: "The document deleted or replaced" }
+        replacementDocumentId: { type: string, format: uuid, nullable: true, description: "The new document of a REPLACE; null for a DELETE" }
         reason: { $ref: "#/components/schemas/DocumentActionReason" }
-        requestedAt: { type: string, format: date, nullable: true, description: "Date the holder made the request; null when it was not given (reason=UPLOAD_ERROR)" }
-        requestChannel: { type: string, nullable: true, enum: [WHATSAPP, EMAIL, IN_PERSON, OTHER, null], description: "null when it was not given (reason=UPLOAD_ERROR)" }
-        note: { type: string, nullable: true, maxLength: 500 }
+        requestedAt: { type: string, format: date, nullable: true, description: "Date the holder made the request; null for UPLOAD_ERROR" }
+        requestChannel: { type: string, nullable: true, enum: [WHATSAPP, EMAIL, IN_PERSON, OTHER, null], description: "null for UPLOAD_ERROR" }
+        note: { type: string, nullable: true, maxLength: 500, description: "Only a reference (ticket or channel); null when absent or blank" }
         contentType: { type: string, enum: [image/jpeg, image/png, application/pdf], description: "Type of the deleted or replaced file" }
         sizeBytes: { type: integer, minimum: 1, maximum: 5242880, description: "Size of the deleted or replaced file" }
         actorId: { type: string, format: uuid, description: "The administrator who performed the action" }
