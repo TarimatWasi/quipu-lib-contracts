@@ -1248,15 +1248,18 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: >
-            `PAYMENT_ALREADY_RESOLVED` (another process resolved it first) or
-            `PAYMENT_ALREADY_EXISTS_FOR_PERIOD` (approving it would leave two approved payments for
-            the same period or stay)
+            `PAYMENT_ALREADY_RESOLVED` (the payment is no longer pending: another process resolved
+            it first), `PAYMENT_ALREADY_EXISTS_FOR_PERIOD` (approving it would leave two approved
+            payments for the same period or stay) or `PAYMENT_PERIOD_NOT_PAYABLE` (approving a
+            payment whose period the contract no longer charges, because it was terminated or expired
+            first; the payment stays pending and can only be rejected with a reason)
           content:
             application/json:
               schema:
                 anyOf:
                   - $ref: "#/components/schemas/PaymentAlreadyResolvedError"
                   - $ref: "#/components/schemas/PaymentAlreadyExistsForPeriodError"
+                  - $ref: "#/components/schemas/PaymentPeriodNotPayableError"
 
   # ───────────────────────── ADMIN: EXPENSES (RF-07, CU-08) ─────────────────────────
   /admin/expenses:
@@ -2959,6 +2962,17 @@ components:
       required: [code, message]
       properties:
         code: { type: string, enum: [PAYMENT_ALREADY_RESOLVED] }
+        message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+
+    PaymentPeriodNotPayableError:
+      type: object
+      description: >
+        The payment's period is no longer charged by the contract (it was terminated or expired
+        before the approval), so it cannot be approved. The payment stays pending and can only be
+        rejected with a reason. The `code` is always `PAYMENT_PERIOD_NOT_PAYABLE`
+      required: [code, message]
+      properties:
+        code: { type: string, enum: [PAYMENT_PERIOD_NOT_PAYABLE] }
         message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
 
     ExpenseInput:
