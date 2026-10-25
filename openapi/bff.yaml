@@ -15,7 +15,7 @@ info:
     reference this spec stay in Spanish (formal documentation). User-facing
     error `message` values stay in Spanish — the end users (Tarimat Wasi
     family and guests) read Spanish, not English.
-  version: "1.0"
+  version: "0.9.1"
   license:
     name: Proprietary - all rights reserved (Tarimat Wasi)
 servers:
@@ -790,6 +790,7 @@ paths:
         only one wins; the row is taken by `(guest_id, id)` with a row lock or a
         conditional delete, and the loser gets 404 `RESOURCE_NOT_FOUND`.
         Never cacheable (`Cache-Control: no-store`).
+        Rate limited per session user, checked before the file is read: over the limit the answer is 429 `RATE_LIMITED` with a `Retry-After` header.
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       parameters:
@@ -968,6 +969,8 @@ paths:
       operationId: createContract
       tags: [admin-contracts]
       summary: Upload contract (RF-03, CU-03)
+      description: >
+        Rate limited per session user, checked before the file is read: over the limit the answer is 429 `RATE_LIMITED` with a `Retry-After` header.
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       requestBody:
@@ -1016,6 +1019,7 @@ paths:
                   - $ref: "#/components/schemas/GuestHasPendingDebtError"
                   - $ref: "#/components/schemas/EnvironmentInactiveError"
                   - $ref: "#/components/schemas/EnvironmentOccupiedError"
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "503": { $ref: "#/components/responses/FileStorageUnavailable" }
 
   /admin/contracts/{id}:
@@ -1133,6 +1137,8 @@ paths:
         Register a direct payment (cash/manual) — admin uploads the
         voucher on the guest's behalf, auto-approved (RN-22, RN-23, CU-14).
         A voucher is always required, no exceptions (RN-22).
+      description: >
+        Rate limited per session user, checked before the file is read: over the limit the answer is 429 `RATE_LIMITED` with a `Retry-After` header.
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       requestBody:
@@ -1186,6 +1192,7 @@ paths:
                   - $ref: "#/components/schemas/GuestNotActiveError"
                   - $ref: "#/components/schemas/PaymentAlreadyExistsForPeriodError"
                   - $ref: "#/components/schemas/VoucherAlreadyExistsError"
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "503": { $ref: "#/components/responses/FileStorageUnavailable" }
 
   /admin/payments/{id}:
@@ -1435,6 +1442,8 @@ paths:
       operationId: uploadPaymentVoucher
       tags: [guest]
       summary: Upload monthly payment voucher (RF-04, CU-17)
+      description: >
+        Rate limited per session user, checked before the file is read: over the limit the answer is 429 `RATE_LIMITED` with a `Retry-After` header.
       security: [{ cookieAuth: [] }]
       x-roles: [GUEST] # guestType CONTRACT
       requestBody:
@@ -1485,6 +1494,7 @@ paths:
                   - $ref: "#/components/schemas/GuestNotActiveError"
                   - $ref: "#/components/schemas/PaymentAlreadyExistsForPeriodError"
                   - $ref: "#/components/schemas/VoucherAlreadyExistsError"
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "503": { $ref: "#/components/responses/FileStorageUnavailable" }
 
   /guest/profile:
@@ -1576,6 +1586,7 @@ paths:
         /admin/guests/{id}/documents/{documentId}/deletion` and `PUT
         /admin/guests/{id}/documents/{documentId}`), and each action leaves an
         evidence entry with who and when (`GET /admin/guests/{id}/document-actions`).
+        Rate limited per session user, checked before the file is read: over the limit the answer is 429 `RATE_LIMITED` with a `Retry-After` header.
       security: [{ cookieAuth: [] }]
       x-roles: [GUEST] # either guestType
       requestBody:
@@ -1677,6 +1688,8 @@ paths:
         a stay (RN-13, RN-18, `POST /admin/guests/{id}/stays`). The guest does not choose
         the stay: the voucher belongs to the stay in force today, otherwise to the next one
         that has no pending or approved payment.
+      description: >
+        Rate limited per session user, checked before the file is read: over the limit the answer is 429 `RATE_LIMITED` with a `Retry-After` header.
       security: [{ cookieAuth: [] }]
       x-roles: [GUEST] # guestType TEMPORARY
       requestBody:
@@ -1725,6 +1738,7 @@ paths:
                   - $ref: "#/components/schemas/GuestNotActiveError"
                   - $ref: "#/components/schemas/PaymentAlreadyExistsForPeriodError"
                   - $ref: "#/components/schemas/VoucherAlreadyExistsError"
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "503": { $ref: "#/components/responses/FileStorageUnavailable" }
 
   /temporary-guest/profile:
