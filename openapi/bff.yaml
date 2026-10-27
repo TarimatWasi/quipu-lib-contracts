@@ -401,6 +401,27 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/ConcurrentModification" }
 
+  /admin/environments/{id}/account-status:
+    get:
+      operationId: getEnvironmentAccountStatus
+      tags: [admin-environments]
+      summary: Payment status by period of the environment's current contract, admin view (RF-06, D-66)
+      description: >-
+        Every period of the environment's current contract (status `ACTIVE`, RN-07), classified as in
+        `getGuestAccountStatus` (paid, pending review, unpaid or overdue by payment day plus grace days,
+        RN-10), in the same order. An environment without a current contract (none, expired or terminated)
+        answers an empty list. Works for active and inactive environments.
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200":
+          description: Status per period of the environment's current contract
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/PeriodStatus" } } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /admin/administrators:
     post:
       operationId: createAdministrator
