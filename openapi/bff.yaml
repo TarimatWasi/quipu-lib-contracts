@@ -26,6 +26,8 @@ tags:
     description: Login, link activation, session and password recovery (RF-08, RF-11, RF-12, RF-16)
   - name: admin-environments
     description: Rentable environment inventory (RF-01, RF-13)
+  - name: admin-administrators
+    description: Additional administrators created by an administrator (RF-22, CU-30, D-34c)
   - name: admin-guests
     description: Guest minimal registration, detail, access generation and onboarding documents (RF-02, RF-11, RF-13, RF-17)
   - name: admin-contracts
@@ -398,6 +400,52 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/ConcurrentModification" }
+
+  /admin/administrators:
+    post:
+      operationId: createAdministrator
+      tags: [admin-administrators]
+      summary: An administrator creates another administrator (RF-22, CU-30)
+      description: >-
+        Creates an active ADMIN account with an unusable random password and emails the new
+        administrator a single-use link that expires in 30 minutes to set their own password
+        (the same flow as the first administrator, RF-16, SEG-05). No password, code or link is ever
+        returned. The creator re-authenticates with `currentPassword`. Administrators are equals,
+        without hierarchy (SRS 03). At most 5 administrators may exist (configurable). Every other
+        active administrator is notified by email. If the email cannot be sent the account still
+        exists, `emailSent` is false and the new administrator can use "forgot password" later.
+        Deactivating administrators is out of scope (TAR-127).
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdministratorInput" }
+      responses:
+        "201":
+          description: Administrator created
+          content: { application/json: { schema: { $ref: "#/components/schemas/AdministratorCreated" } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403":
+          description: >-
+            Not an administrator (`AUTH_FORBIDDEN`), the session still has the password change
+            pending (`AUTH_PASSWORD_CHANGE_REQUIRED`), or `currentPassword` is wrong (`AUTH_INVALID_CREDENTIALS` with
+            `field: currentPassword`)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: >-
+            `ACCOUNT_DOCUMENT_TAKEN` (the document already belongs to an account, administrator or
+            guest, `field: documentNumber`), `ACCOUNT_EMAIL_TAKEN` (the email, case-insensitive, already
+            belongs to an account, `field: email`; a guest contact email is not an account email, D-33)
+            or `ADMIN_LIMIT_REACHED` (the maximum number of administrators already exists)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
 
   # ───────────────────────── ADMIN: GUESTS (RF-02, RF-13, RF-14, RF-17, CU-02, CU-06, CU-10, CU-11, CU-13) ─────────────────────────
   /admin/guests:
@@ -2359,6 +2407,23 @@ components:
         expiresAt: { type: string, format: date-time }
         emailSent: { type: boolean, description: "true if the access (the link, or the temporary password) was sent to the guest's email (best-effort, RN-19)" }
         shareMessage: { type: string, description: "Spanish text ready to copy or to send by WhatsApp, with the password and the 30-minute notice" }
+
+    AdministratorInput:
+      type: object
+      description: Data of the new administrator plus the re-authentication of the creator (RF-22, D-34c)
+      required: [documentType, documentNumber, email, currentPassword]
+      properties:
+        documentType: { $ref: "#/components/schemas/DocumentType" }
+        documentNumber: { type: string, minLength: 1, maxLength: 20 }
+        email: { type: string, format: email, maxLength: 200, description: "Account email of the new administrator, where the access link goes" }
+        currentPassword: { type: string, minLength: 1, maxLength: 128, writeOnly: true, description: "Password of the administrator who creates the account" }
+
+    AdministratorCreated:
+      type: object
+      required: [id, emailSent]
+      properties:
+        id: { type: string, format: uuid }
+        emailSent: { type: boolean, description: "true if the access link was sent to the new administrator (best-effort)" }
 
     GuestInput:
       type: object
