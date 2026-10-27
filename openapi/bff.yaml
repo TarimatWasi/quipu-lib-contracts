@@ -1343,22 +1343,34 @@ paths:
       operationId: listFines
       tags: [admin-fines]
       summary: List monthly fines (RF-19)
+      description: >
+        Fines of the month, of any guest, active or inactive. The list is a plain array with no
+        pagination: a month has few fines (RF-19).
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       parameters:
         - name: month
           in: query
           required: true
-          schema: { type: string, pattern: "^\\d{4}-\\d{2}$" }
+          schema: { type: string, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09" }
       responses:
         "200":
-          description: Fine list
+          description: Fines of the month, not paginated
           content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Fine" } } } }
+        "400":
+          description: "`VALIDATION_ERROR` with `field: month` (missing, or not a YYYY-MM month)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
     post:
       operationId: createFine
       tags: [admin-fines]
       summary: Register fine as income against a guest (RF-19, RN-30)
+      description: >
+        A fine is direct income of its month (RN-30): it takes no voucher and no approval, and it
+        counts in the monthly balance as soon as it is created. It accepts any existing guest,
+        active or inactive (a fine can be charged after the guest left). A fine is not edited:
+        to change it, delete it and create it again (RN-24).
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       requestBody:
@@ -1369,23 +1381,35 @@ paths:
       responses:
         "201":
           description: Fine created
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
           content: { application/json: { schema: { $ref: "#/components/schemas/Fine" } } }
-        "400": { description: "Invalid amount or month" }
+        "400":
+          description: >
+            `VALIDATION_ERROR` with its `field`: `guestId` missing or not a UUID, `amount` missing,
+            not greater than 0, over 99999999.99 or with more than two decimals, `month` missing or
+            not a YYYY-MM month, or `description` over 500 characters
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "401": { $ref: "#/components/responses/NoSession" }
-        "404": { description: "Guest not found" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: "The guest does not exist (`RESOURCE_NOT_FOUND`)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   /admin/fines/{id}:
     delete:
       operationId: deleteFine
       tags: [admin-fines]
       summary: Delete fine — no audit restriction (RN-24)
+      description: >
+        Deletes the fine for good (RN-24): it leaves the monthly balance at once. There is no
+        edit operation; to correct a fine, delete it and create it again (RF-19, RN-30).
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       parameters: [{ $ref: "#/components/parameters/Id" }]
       responses:
-        "204": { description: Fine deleted }
+        "204": { description: Fine deleted for good (RN-24) }
         "401": { $ref: "#/components/responses/NoSession" }
-        "404": { $ref: "#/components/responses/NotFound" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: "The fine does not exist (`RESOURCE_NOT_FOUND`)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   # ───────────────────────── CONTRACT GUEST (RF-04, RF-06, RF-10, CU-16..20) ─────────────────────────
   /guest/account-status:
@@ -2988,18 +3012,21 @@ components:
       type: object
       required: [guestId, amount, month]
       properties:
-        guestId: { type: string, format: uuid }
-        amount: { type: number }
-        month: { type: string, pattern: "^\\d{4}-\\d{2}$" }
-        description: { type: string }
+        guestId: { type: string, format: uuid, description: "Any existing guest, active or inactive" }
+        amount: { type: number, exclusiveMinimum: true, minimum: 0, maximum: 99999999.99, multipleOf: 0.01, description: "In soles, greater than 0, at most two decimals" }
+        month: { type: string, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09", description: "Month the fine counts as income (RN-30)" }
+        description: { type: string, maxLength: 500, description: "Optional; blank means none" }
 
     Fine:
-      allOf:
-        - $ref: "#/components/schemas/FineInput"
-        - type: object
-          required: [id]
-          properties:
-            id: { type: string, format: uuid }
+      type: object
+      description: A fine as the BFF answers it; the fields of `FineInput`, with the same constraints, plus its `id`. The description is left out when there is none.
+      required: [id, guestId, amount, month]
+      properties:
+        id: { type: string, format: uuid }
+        guestId: { type: string, format: uuid }
+        amount: { type: number, exclusiveMinimum: true, minimum: 0, maximum: 99999999.99, multipleOf: 0.01, description: "In soles, greater than 0, at most two decimals" }
+        month: { type: string, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09" }
+        description: { type: string, maxLength: 500 }
 
     Expense:
       type: object
