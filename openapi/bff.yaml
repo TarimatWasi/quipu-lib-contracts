@@ -274,6 +274,7 @@ paths:
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
     post:
       operationId: createEnvironment
       tags: [admin-environments]
@@ -301,6 +302,7 @@ paths:
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "409": { $ref: "#/components/responses/EnvironmentCodeTaken" }
 
   /admin/environments/{id}:
@@ -317,6 +319,7 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/Environment" } } }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
       operationId: updateEnvironment
@@ -343,6 +346,7 @@ paths:
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: >
@@ -374,6 +378,7 @@ paths:
         "204": { description: "Environment deactivated, history preserved; deactivating an inactive one changes nothing" }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: >
@@ -398,6 +403,7 @@ paths:
         "204": { description: "Environment reactivated, visible in active listings again; reactivating an active one changes nothing" }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/ConcurrentModification" }
 
@@ -420,6 +426,7 @@ paths:
           content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/PeriodStatus" } } } }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /admin/administrators:
@@ -495,6 +502,7 @@ paths:
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
     post:
       operationId: createGuest
       tags: [admin-guests]
@@ -535,6 +543,7 @@ paths:
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "409":
           description: >
             `GUEST_INACTIVE` (the document belongs to an inactive guest, RN-12, RN-18),
@@ -562,6 +571,7 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/GuestDetail" } } }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
       operationId: updateGuest
@@ -582,6 +592,7 @@ paths:
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: >
@@ -621,6 +632,7 @@ paths:
         "204": { description: Guest deactivated }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: >
@@ -651,6 +663,7 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/NonInactiveGuestSummary" } } }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: >
@@ -683,6 +696,7 @@ paths:
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "404": { $ref: "#/components/responses/NotFound" }
     post:
       operationId: createGuestStay
@@ -706,6 +720,7 @@ paths:
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: >
@@ -739,6 +754,7 @@ paths:
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: >
@@ -832,6 +848,7 @@ paths:
               schema: { type: array, maxItems: 5, items: { $ref: "#/components/schemas/GuestDocument" } }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /admin/guests/{id}/documents/{documentId}:
@@ -1008,6 +1025,7 @@ paths:
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /admin/guests/{id}/account-status:
@@ -1030,6 +1048,7 @@ paths:
           content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/PeriodStatus" } } } }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   # ───────────────────────── ADMIN: CONTRACTS (RF-03, RF-09, CU-03, CU-07, CU-12) ─────────────────────────
@@ -1056,6 +1075,8 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/PagedContracts" } } }
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
     post:
       operationId: createContract
       tags: [admin-contracts]
@@ -1092,7 +1113,7 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
-        "404": { description: "The environment or the guest does not exist (`RESOURCE_NOT_FOUND`)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: "The environment (`ENVIRONMENT_NOT_FOUND`) or the guest (`GUEST_NOT_FOUND`) does not exist", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "409":
           description: >
             `GUEST_NOT_ACTIVE` (the guest is not active, RN-35), `GUEST_NOT_CONTRACT` (only a
@@ -1128,6 +1149,8 @@ paths:
             Cache-Control: { required: true, schema: { type: string, enum: ["no-store"] } }
           content: { application/json: { schema: { $ref: "#/components/schemas/Contract" } } }
         "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/FileStorageUnavailable" }
 
@@ -1144,6 +1167,7 @@ paths:
         "204": { description: Contract terminated }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   # ───────────────────────── ADMIN: PAYMENTS (RF-05, RF-06, CU-04, CU-05, CU-14) ─────────────────────────
@@ -1170,6 +1194,8 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/PaymentSummary" }
         "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /admin/finance:
     get:
@@ -1197,6 +1223,8 @@ paths:
                   net: { type: number }
         "400": { description: "Invalid month parameter" }
         "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /admin/payments:
     get:
@@ -1221,6 +1249,8 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/PagedPaymentQueue" } } }
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
     post:
       operationId: createDirectPayment
       tags: [admin-payments]
@@ -1270,7 +1300,7 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
-        "404": { description: "The guest or the stay does not exist (`RESOURCE_NOT_FOUND`)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: "The guest (`GUEST_NOT_FOUND`) or the stay (`STAY_NOT_FOUND`) does not exist", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "409":
           description: >
             `GUEST_NOT_ACTIVE` (RN-35), `PAYMENT_ALREADY_EXISTS_FOR_PERIOD` (an approved payment
@@ -1303,6 +1333,7 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/Payment" } } }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/FileStorageUnavailable" }
     patch:
@@ -1336,6 +1367,7 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: >
@@ -1374,6 +1406,7 @@ paths:
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
     post:
       operationId: createExpense
       tags: [admin-expenses]
@@ -1394,6 +1427,7 @@ paths:
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /admin/expenses/{id}:
     patch:
@@ -1413,6 +1447,7 @@ paths:
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/ConcurrentModification" }
     delete:
@@ -1426,6 +1461,7 @@ paths:
         "204": { description: Expense deleted for good (RN-24) }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   # ───────────────────────── ADMIN: FINES (RF-19, RN-30) ─────────────────────────
@@ -1453,6 +1489,7 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
     post:
       operationId: createFine
       tags: [admin-fines]
@@ -1483,6 +1520,7 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "404": { description: "The guest does not exist (`RESOURCE_NOT_FOUND`)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   /admin/fines/{id}:
@@ -1500,6 +1538,7 @@ paths:
         "204": { description: Fine deleted for good (RN-24) }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "404": { description: "The fine does not exist (`RESOURCE_NOT_FOUND`)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   # ───────────────────────── CONTRACT GUEST (RF-04, RF-06, RF-10, CU-16..20) ─────────────────────────
