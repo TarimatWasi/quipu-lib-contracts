@@ -1216,7 +1216,7 @@ paths:
           in: query
           required: true
           description: Month to summarize, YYYY-MM with a year from 0001 to 9999
-          schema: { type: string, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09" }
+          schema: { type: string, pattern: "^(?!0000)\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09" }
       responses:
         "200":
           description: Monthly balance
@@ -1226,7 +1226,7 @@ paths:
                 type: object
                 required: [month, totalIncome, incomeFromPayments, incomeFromFines, totalExpenses, net]
                 properties:
-                  month: { type: string, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09" }
+                  month: { type: string, pattern: "^(?!0000)\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09" }
                   totalIncome: { type: number, multipleOf: 0.01, description: "incomeFromPayments + incomeFromFines" }
                   incomeFromPayments: { type: number, multipleOf: 0.01, description: "Approved contract and stay payments attributed to the month" }
                   incomeFromFines: { type: number, multipleOf: 0.01, description: "Fines of the month" }
