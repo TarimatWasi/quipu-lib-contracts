@@ -941,6 +941,28 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /admin/guests/{id}/account-status:
+    get:
+      operationId: getGuestAccountStatusByAdmin
+      tags: [admin-guests]
+      summary: A guest's payment status by period, admin view (RF-06) — the same classification the guest sees in `getGuestAccountStatus`
+      description: >-
+        Every period of the guest's contracts, current or past, classified as in `getGuestAccountStatus`
+        (paid, pending review, unpaid or overdue by payment day plus grace days, RN-10), in the same order.
+        A guest without contracts, such as a temporary guest, answers an empty list. Works for active and
+        inactive guests.
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+      responses:
+        "200":
+          description: Status per period of the given guest
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/PeriodStatus" } } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   # ───────────────────────── ADMIN: CONTRACTS (RF-03, RF-09, CU-03, CU-07, CU-12) ─────────────────────────
   /admin/contracts:
     get:
