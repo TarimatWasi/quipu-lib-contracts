@@ -465,7 +465,13 @@ paths:
                   createdAt: "2026-03-02T16:30:00Z"
                   self: false
         "401": { $ref: "#/components/responses/NoSession" }
-        "403": { $ref: "#/components/responses/Forbidden" }
+        "403":
+          description: >-
+            Not an administrator (`AUTH_FORBIDDEN`) or the session still has the password change
+            pending (`AUTH_PASSWORD_CHANGE_REQUIRED`)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
     post:
       operationId: createAdministrator
