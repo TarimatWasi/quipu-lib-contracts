@@ -430,6 +430,43 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
 
   /admin/administrators:
+    get:
+      operationId: listAdministrators
+      tags: [admin-administrators]
+      summary: List the administrators, active and inactive (RF-22, TAR-127)
+      description: >-
+        Every ADMIN account, active and inactive, ordered by `createdAt` (oldest first). Not paginated:
+        there are never more than the configurable maximum of administrators (5). The document number
+        comes masked and `self` marks the account of the session. Never cacheable
+        (`Cache-Control: no-store`).
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      responses:
+        "200":
+          description: The administrators
+          headers:
+            Cache-Control: { required: true, schema: { type: string, enum: ["no-store"] } }
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/AdministratorSummary" } }
+              example:
+                - id: 3f2b8c1e-7a4d-4e6b-9c0a-1d2e3f4a5b6c
+                  documentType: DNI
+                  documentNumber: "*****678"
+                  email: admin.uno@example.com
+                  status: ACTIVE
+                  createdAt: "2026-01-15T14:00:00Z"
+                  self: true
+                - id: 8a7b6c5d-4e3f-4a1b-8c2d-3e4f5a6b7c8d
+                  documentType: CE
+                  documentNumber: "******321"
+                  email: admin.dos@example.com
+                  status: INACTIVE
+                  createdAt: "2026-03-02T16:30:00Z"
+                  self: false
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
     post:
       operationId: createAdministrator
       tags: [admin-administrators]
@@ -442,7 +479,8 @@ paths:
         without hierarchy (SRS 03). At most 5 administrators may exist (configurable). Every other
         active administrator is notified by email. If the email cannot be sent the account still
         exists, `emailSent` is false and the new administrator can use "forgot password" later.
-        Deactivating administrators is out of scope (TAR-127).
+        Administrators are listed with `listAdministrators` and deactivated or reactivated with
+        `deactivateAdministrator` and `reactivateAdministrator` (TAR-127).
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       requestBody:
@@ -473,6 +511,87 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /admin/administrators/{id}/deactivate:
+    post:
+      operationId: deactivateAdministrator
+      tags: [admin-administrators]
+      summary: Deactivate an administrator (RF-22, TAR-127)
+      description: >-
+        Deactivates another ADMIN account, effective immediately: its session stops being valid from
+        its next request on and it cannot log in until it is reactivated. Its history is kept. The
+        caller re-authenticates with `currentPassword`, checked before anything else. An administrator
+        cannot deactivate their own account (`ADMIN_SELF_DEACTIVATION`) and the last active
+        administrator cannot be deactivated (`LAST_ACTIVE_ADMIN`): the system always keeps at least
+        one active ADMIN. Deactivating an inactive administrator is idempotent: 204 and nothing
+        changes. When the account changes, every other active administrator is notified by email
+        (best-effort). Its own rate limit: 3 requests per minute per session user.
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdministratorReauthentication" }
+      responses:
+        "204": { description: "Administrator deactivated; deactivating an inactive one changes nothing" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403":
+          description: >-
+            Not an administrator (`AUTH_FORBIDDEN`), the session still has the password change
+            pending (`AUTH_PASSWORD_CHANGE_REQUIRED`), or `currentPassword` is wrong (`AUTH_INVALID_CREDENTIALS` with
+            `field: currentPassword`)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404": { $ref: "#/components/responses/AdministratorNotFound" }
+        "409":
+          description: >-
+            `ADMIN_SELF_DEACTIVATION` (the target is the account of the session) or `LAST_ACTIVE_ADMIN`
+            (deactivating it would leave no active administrator)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdministratorDeactivationConflictError" }
+              example:
+                code: LAST_ACTIVE_ADMIN
+                message: No puedes desactivar al último administrador activo
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /admin/administrators/{id}/reactivate:
+    post:
+      operationId: reactivateAdministrator
+      tags: [admin-administrators]
+      summary: Reactivate a previously deactivated administrator (RF-22, TAR-127)
+      description: >-
+        Reactivates an inactive ADMIN account, effective immediately: it can log in again. The caller
+        re-authenticates with `currentPassword`, checked before anything else. Reactivating an
+        active administrator is idempotent: 204 and nothing changes. When the account changes,
+        every other active administrator is notified by email (best-effort). Its own rate limit:
+        3 requests per minute per session user.
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdministratorReauthentication" }
+      responses:
+        "204": { description: "Administrator reactivated; reactivating an active one changes nothing" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403":
+          description: >-
+            Not an administrator (`AUTH_FORBIDDEN`), the session still has the password change
+            pending (`AUTH_PASSWORD_CHANGE_REQUIRED`), or `currentPassword` is wrong (`AUTH_INVALID_CREDENTIALS` with
+            `field: currentPassword`)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404": { $ref: "#/components/responses/AdministratorNotFound" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
   # ───────────────────────── ADMIN: GUESTS (RF-02, RF-13, RF-14, RF-17, CU-02, CU-06, CU-10, CU-11, CU-13) ─────────────────────────
@@ -2093,6 +2212,21 @@ components:
             properties:
               code: { type: string, enum: [AUTH_FORBIDDEN] }
               message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+    AdministratorNotFound:
+      description: >-
+        The id does not exist or is not an ADMIN account (`ADMIN_NOT_FOUND`); both cases answer the
+        same `message`
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [code, message]
+            properties:
+              code: { type: string, enum: [ADMIN_NOT_FOUND] }
+              message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+          example:
+            code: ADMIN_NOT_FOUND
+            message: El administrador no existe
     GuestDocumentNotFound:
       description: >
         The guest does not exist, the document does not belong to that guest, or a
@@ -2497,6 +2631,37 @@ components:
       properties:
         id: { type: string, format: uuid }
         emailSent: { type: boolean, description: "true if the access link was sent to the new administrator (best-effort)" }
+
+    AdministratorSummary:
+      type: object
+      description: An administrator in the list (TAR-127)
+      required: [id, documentType, documentNumber, email, status, createdAt, self]
+      properties:
+        id: { type: string, format: uuid }
+        documentType: { $ref: "#/components/schemas/DocumentType" }
+        documentNumber:
+          type: string
+          description: "Masked: only the last 3 characters are shown, every other one is replaced by `*`"
+          example: "*****678"
+        email: { type: string, format: email, description: "Account email of the administrator" }
+        status: { type: string, enum: [ACTIVE, INACTIVE] }
+        createdAt: { type: string, format: date-time }
+        self: { type: boolean, description: "true for the account of the session" }
+
+    AdministratorReauthentication:
+      type: object
+      description: Re-authentication of the administrator who deactivates or reactivates another one (TAR-127)
+      required: [currentPassword]
+      properties:
+        currentPassword: { type: string, minLength: 1, maxLength: 128, writeOnly: true, description: "Password of the administrator who makes the change" }
+
+    AdministratorDeactivationConflictError:
+      type: object
+      description: The deactivation is refused so that the system keeps at least one active administrator (TAR-127)
+      required: [code, message]
+      properties:
+        code: { type: string, enum: [ADMIN_SELF_DEACTIVATION, LAST_ACTIVE_ADMIN] }
+        message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
 
     GuestInput:
       type: object
