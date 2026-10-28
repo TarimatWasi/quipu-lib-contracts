@@ -155,8 +155,9 @@ paths:
           description: >
             `AUTH_INVALID_OR_EXPIRED_CODE` (unknown, expired, revoked or
             already used token: one generic answer for all of them),
-            `AUTH_WEAK_PASSWORD` (with `field: newPassword`; the token is not
-            consumed) or `VALIDATION_ERROR` if a field is missing
+            `AUTH_WEAK_PASSWORD` (with `field: newPassword`: too short, too long or
+            equal to a live link or temporary password of the account; the token
+            is not consumed) or `VALIDATION_ERROR` if a field is missing
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -189,8 +190,9 @@ paths:
         "204": { description: Password updated; Set-Cookie replaces the session }
         "400":
           description: >
-            `AUTH_WEAK_PASSWORD` (shorter than 8 characters or longer than 72
-            bytes) or `AUTH_PASSWORD_UNCHANGED` (same as the current one), both
+            `AUTH_WEAK_PASSWORD` (shorter than 8 characters, longer than 72
+            bytes, or equal to a live link or temporary password of the account)
+            or `AUTH_PASSWORD_UNCHANGED` (same as the current one), both
             with `field: newPassword`; `VALIDATION_ERROR` if the field is missing
           content:
             application/json:
@@ -244,8 +246,9 @@ paths:
           description: >
             `AUTH_INVALID_OR_EXPIRED_CODE` (unknown, expired or already used
             code, or a disabled account: one generic answer for all of them),
-            `AUTH_WEAK_PASSWORD` (with `field: newPassword`; the code is not
-            consumed) or `VALIDATION_ERROR` if a field is missing
+            `AUTH_WEAK_PASSWORD` (with `field: newPassword`: too short, too long or
+            equal to a live link or temporary password of the account; the code
+            is not consumed) or `VALIDATION_ERROR` if a field is missing
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
