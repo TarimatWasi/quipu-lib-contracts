@@ -1821,7 +1821,6 @@ paths:
         "403": { $ref: "#/components/responses/GuestAccessDenied" }
         "409": { $ref: "#/components/responses/GuestEmailTaken" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
-        "429": { $ref: "#/components/responses/TooManyRequests" }
 
   # ───────────────────────── GUEST ONBOARDING (RF-14, RF-20, CU-11, CU-24..26) ─────────────────────────
   # Open to a GUEST of either type. Until the onboarding is complete every other
@@ -2066,6 +2065,7 @@ paths:
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/GuestAccessDenied" }
         "409": { $ref: "#/components/responses/GuestEmailTaken" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
 
 components:
   securitySchemes:
