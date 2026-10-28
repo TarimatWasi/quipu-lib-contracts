@@ -1301,6 +1301,12 @@ paths:
       operationId: getAdminDashboard
       tags: [admin-dashboard]
       summary: Administrator home summary (HU-A04, CU-04)
+      description: >
+        One state per active contract (its period of the current month, America/Lima,
+        RN-10) and per temporary guest whose stay covers today: `PAID` counts as up to
+        date, `UNDER_REVIEW` as under review, `UNPAID` not yet overdue as pending and
+        `OVERDUE` as overdue (RN-06). The vouchers awaiting review come oldest first,
+        at most 20; `pendingVouchersTotal` gives how many there are.
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       responses:
@@ -1310,14 +1316,17 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [paymentsUpToDate, paymentsPending, paymentsOverdue, pendingVouchers]
+                required: [paymentsUpToDate, paymentsUnderReview, paymentsPending, paymentsOverdue, pendingVouchers, pendingVouchersTotal]
                 properties:
-                  paymentsUpToDate: { type: integer }
-                  paymentsPending: { type: integer }
-                  paymentsOverdue: { type: integer }
+                  paymentsUpToDate: { type: integer, minimum: 0, description: "PAID" }
+                  paymentsUnderReview: { type: integer, minimum: 0, description: "UNDER_REVIEW" }
+                  paymentsPending: { type: integer, minimum: 0, description: "UNPAID, not yet overdue" }
+                  paymentsOverdue: { type: integer, minimum: 0, description: "OVERDUE" }
                   pendingVouchers:
                     type: array
+                    maxItems: 20
                     items: { $ref: "#/components/schemas/PaymentSummary" }
+                  pendingVouchersTotal: { type: integer, minimum: 0 }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
@@ -2757,7 +2766,12 @@ components:
 
     ProfileUpdateInput:
       type: object
-      description: The guest edits their own data; every field is optional (RN-17)
+      description: >
+        The guest edits their own data; every field is optional and an absent field
+        keeps its value (RN-17). The document, the contract and the stays are not
+        editable here.
+      minProperties: 1
+      additionalProperties: false
       properties:
         name: { type: string, minLength: 1, maxLength: 200 }
         phone: { type: string, minLength: 1, maxLength: 30 }
