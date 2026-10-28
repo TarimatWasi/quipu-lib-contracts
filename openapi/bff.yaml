@@ -15,6 +15,11 @@ info:
     reference this spec stay in Spanish (formal documentation). User-facing
     error `message` values stay in Spanish — the end users (Tarimat Wasi
     family and guests) read Spanish, not English.
+    Every `format: uuid` id is masked per session (TAR-227): the same
+    resource has a different id in each session, so ids must not be stored
+    or shared across sessions; an id obtained in another session answers 404,
+    like an unknown one. A pagination cursor may embed such ids: use it only
+    in the session that received it (one from another session can be a 400).
   version: "1.0"
   license:
     name: Proprietary - all rights reserved (Tarimat Wasi)
