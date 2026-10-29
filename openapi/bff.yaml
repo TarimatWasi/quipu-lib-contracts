@@ -915,7 +915,7 @@ paths:
         (D-33). The administrator sets it when the guest has none or changes
         it. Pending password-reset codes of the account stop working, and if
         the account had another email a notice is sent to it, best-effort.
-        The guest must not be inactive and must have a login account.
+        The guest must not be inactive.
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       parameters: [{ $ref: "#/components/parameters/Id" }]
@@ -937,15 +937,13 @@ paths:
         "409":
           description: >
             `ACCOUNT_EMAIL_TAKEN` (the email, case-insensitive, already belongs to another
-            account, `field: email`), `GUEST_INACTIVE` (the guest is inactive, RN-12) or
-            `GUEST_WITHOUT_ACCOUNT` (the guest has no login account yet)
+            account, `field: email`) or `GUEST_INACTIVE` (the guest is inactive, RN-12)
           content:
             application/json:
               schema:
                 anyOf:
                   - $ref: "#/components/schemas/AccountEmailTakenError"
                   - $ref: "#/components/schemas/GuestInactiveError"
-                  - $ref: "#/components/schemas/Error"
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /admin/guests/{id}/access:
