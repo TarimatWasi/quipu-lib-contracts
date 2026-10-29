@@ -1123,7 +1123,12 @@ paths:
         (idempotent: step 1 finds the object missing and goes on to step 2).
         Concurrency: of two actions on the same `documentId` (delete or replace)
         only one wins; the row is taken by `(guest_id, id)` with a row lock or a
-        conditional delete, and the loser gets 404 `RESOURCE_NOT_FOUND`.
+        conditional delete. A deletion of a document that is already deleted
+        (another deletion won at the same time, or the document was deleted
+        before) is answered 204 as well: the document is gone, and the evidence
+        keeps only the first deletion (who asked, when and why); the repeated
+        one writes nothing. A deletion that loses to a replacement gets 404
+        `RESOURCE_NOT_FOUND`, as does a document that never belonged to that guest.
         Never cacheable (`Cache-Control: no-store`).
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
@@ -1135,7 +1140,9 @@ paths:
         content: { application/json: { schema: { $ref: "#/components/schemas/DocumentActionRequest" } } }
       responses:
         "204":
-          description: File and row deleted, evidence entry recorded
+          description: >
+            File and row deleted, evidence entry recorded; or the document was
+            already deleted, and its first evidence entry stays as it was
           headers:
             Cache-Control: { required: true, schema: { type: string, enum: ["no-store"] } }
         "400":
@@ -2301,7 +2308,8 @@ components:
     GuestDocumentNotFound:
       description: >
         The guest does not exist, the document does not belong to that guest, or a
-        concurrent action on the same document won (`RESOURCE_NOT_FOUND`). A single
+        concurrent action on the same document won (`RESOURCE_NOT_FOUND`; for a
+        deletion, only a replacement that won: an already deleted document is a 204). A single
         lookup by `(guest_id, id)` answers all cases with the same `message`, so the
         response does not reveal whether the guest or the document exists
       content:
