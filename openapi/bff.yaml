@@ -1367,7 +1367,8 @@ paths:
         RN-10) and per temporary guest whose stay covers today: `PAID` counts as up to
         date, `UNDER_REVIEW` as under review, `UNPAID` not yet overdue as pending and
         `OVERDUE` as overdue (RN-06). The vouchers awaiting review come oldest first,
-        at most 20; `pendingVouchersTotal` gives how many there are.
+        at most 20, as rows of the review queue (A5): who the guest is and its
+        environment, without the amount; `pendingVouchersTotal` gives how many there are.
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       responses:
@@ -1386,7 +1387,7 @@ paths:
                   pendingVouchers:
                     type: array
                     maxItems: 20
-                    items: { $ref: "#/components/schemas/PaymentSummary" }
+                    items: { $ref: "#/components/schemas/PaymentQueueItem" }
                   pendingVouchersTotal: { type: integer, minimum: 0 }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
