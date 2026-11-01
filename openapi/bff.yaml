@@ -46,7 +46,7 @@ tags:
   - name: admin-dashboard
     description: Home summary and monthly income/expense balance (RF-18)
   - name: admin-refunds
-    description: Credit left over and refunds of Quipu to guests (RF-22, RN-38, RN-39)
+    description: Credit left over and refunds of Quipu to guests (RF-24, RN-38, RN-39)
   - name: guest-onboarding
     description: Mandatory, resumable onboarding of a new guest of either type (RF-14, RF-20)
   - name: guest
@@ -1757,12 +1757,12 @@ paths:
         "429": { $ref: "#/components/responses/TooManyRequests" }
         "404": { description: "The fine does not exist (`RESOURCE_NOT_FOUND`)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
-  # ───────────────────────── ADMIN: REFUNDS AND CREDITS (RF-22, RN-38, RN-39, TAR-240) ─────────────────────────
+  # ───────────────────────── ADMIN: REFUNDS AND CREDITS (RF-24, RN-38, RN-39, TAR-240) ─────────────────────────
   /admin/refunds:
     get:
       operationId: listRefunds
       tags: [admin-refunds]
-      summary: Refunds of a month (RF-22, A6 «Devoluciones»)
+      summary: Refunds of a month (RF-24, A6 «Devoluciones»)
       description: >
         The refunds Quipu made to guests whose date falls in the month: each one counts in the
         month of its date and is subtracted from that month's income (RN-39, RF-18). Newest first.
@@ -1786,7 +1786,7 @@ paths:
     post:
       operationId: createRefund
       tags: [admin-refunds]
-      summary: Register a refund of Quipu to a guest (RF-22, RN-39, A6.5)
+      summary: Register a refund of Quipu to a guest (RF-24, RN-39, A6.5)
       description: >
         Returns part or all of a guest's pending credit (RN-38): a partial refund is allowed and
         the rest stays pending. The amount cannot exceed the pending credit, also when two refunds
