@@ -1369,6 +1369,11 @@ paths:
         `OVERDUE` as overdue (RN-06). The vouchers awaiting review come oldest first,
         at most 20, as rows of the review queue (A5): who the guest is and its
         environment, without the amount; `pendingVouchersTotal` gives how many there are.
+        `charges` are the rows of «Cobros del mes» (one per active contract and per stay in
+        force today) and the other blocks feed «Lo que toca ahora» and «También pendiente»
+        (A1, decided 2026-11-01): overdue charges, payments rejected and not yet corrected,
+        refunds to register (RN-38, RN-39), contracts expiring in 30 days or less (RN-07) and
+        guests that have not activated their account (RN-32).
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       responses:
@@ -1378,7 +1383,7 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [paymentsUpToDate, paymentsUnderReview, paymentsPending, paymentsOverdue, pendingVouchers, pendingVouchersTotal]
+                required: [paymentsUpToDate, paymentsUnderReview, paymentsPending, paymentsOverdue, pendingVouchers, pendingVouchersTotal, charges, overdue, rejected, refunds, expiringContracts, guestsNotActivated]
                 properties:
                   paymentsUpToDate: { type: integer, minimum: 0, description: "PAID" }
                   paymentsUnderReview: { type: integer, minimum: 0, description: "UNDER_REVIEW" }
@@ -1389,6 +1394,15 @@ paths:
                     maxItems: 20
                     items: { $ref: "#/components/schemas/PaymentQueueItem" }
                   pendingVouchersTotal: { type: integer, minimum: 0 }
+                  charges:
+                    type: array
+                    description: One per active contract (its period of the current month) and per stay in force today; not paginated (a few dozen at most)
+                    items: { $ref: "#/components/schemas/DashboardCharge" }
+                  overdue: { $ref: "#/components/schemas/DashboardOverdue" }
+                  rejected: { $ref: "#/components/schemas/DashboardRejected" }
+                  refunds: { $ref: "#/components/schemas/DashboardRefunds" }
+                  expiringContracts: { $ref: "#/components/schemas/DashboardExpiringContracts" }
+                  guestsNotActivated: { $ref: "#/components/schemas/DashboardGuestsNotActivated" }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
@@ -3322,6 +3336,110 @@ components:
       properties:
         content: { type: array, items: { $ref: "#/components/schemas/PaymentSummary" } }
         nextCursor: { $ref: "#/components/schemas/NextCursor" }
+
+    DashboardCharge:
+      type: object
+      description: A row of «Cobros del mes» in A1 (TAR-236)
+      required: [guestId, guestName, documentType, documentNumber, guestType, environmentCode, contractId, stayId, period, stayStartDate, stayEndDate, amount, dueDate, status, paymentId]
+      properties:
+        guestId: { type: string, format: uuid }
+        guestName: { type: string, nullable: true }
+        documentType: { $ref: "#/components/schemas/DocumentType" }
+        documentNumber: { type: string }
+        guestType: { type: string, enum: [CONTRACT, TEMPORARY] }
+        environmentCode: { type: string, nullable: true, description: "Null for an old stay without environment (TAR-237)" }
+        contractId: { type: string, format: uuid, nullable: true }
+        stayId: { type: string, format: uuid, nullable: true }
+        period: { type: string, nullable: true, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", description: "Period of a contract; null for a stay" }
+        stayStartDate: { type: string, format: date, nullable: true }
+        stayEndDate: { type: string, format: date, nullable: true }
+        amount: { type: number, description: "Monthly amount or agreed amount of the stay, minus the credit applied (RN-38)" }
+        dueDate: { type: string, format: date, description: "Payment day of the period (RN-10) or the check-out date of the stay" }
+        status: { type: string, enum: [PAID, UNDER_REVIEW, UNPAID, OVERDUE] }
+        paymentId: { type: string, format: uuid, nullable: true, description: "The live payment when UNDER_REVIEW, to open A5.2" }
+
+    DashboardChargeRef:
+      type: object
+      required: [guestId, guestName, environmentCode, period, stayStartDate, stayEndDate, dueDate, amount]
+      properties:
+        guestId: { type: string, format: uuid }
+        guestName: { type: string, nullable: true }
+        environmentCode: { type: string, nullable: true }
+        period: { type: string, nullable: true }
+        stayStartDate: { type: string, format: date, nullable: true }
+        stayEndDate: { type: string, format: date, nullable: true }
+        dueDate: { type: string, format: date }
+        amount: { type: number }
+
+    DashboardOverdue:
+      type: object
+      description: Overdue charges, of this month or earlier (RN-10, RN-25)
+      required: [count, total, first]
+      properties:
+        count: { type: integer, minimum: 0 }
+        total: { type: number, minimum: 0 }
+        first: { type: array, maxItems: 3, description: "The oldest ones first", items: { $ref: "#/components/schemas/DashboardChargeRef" } }
+
+    DashboardRejected:
+      type: object
+      description: Payments rejected that nobody has corrected yet (RN-05, A5 Rechazados)
+      required: [count, oldest]
+      properties:
+        count: { type: integer, minimum: 0 }
+        oldest:
+          type: object
+          nullable: true
+          required: [paymentId, guestName, period, stayStartDate, stayEndDate, rejectedAt]
+          properties:
+            paymentId: { type: string, format: uuid }
+            guestName: { type: string, nullable: true }
+            period: { type: string, nullable: true }
+            stayStartDate: { type: string, format: date, nullable: true }
+            stayEndDate: { type: string, format: date, nullable: true }
+            rejectedAt: { type: string, format: date-time }
+
+    DashboardRefunds:
+      type: object
+      description: Credit to refund (RN-38, RN-39); the detail is in GET /admin/credits?pending=true
+      required: [count, total]
+      properties:
+        count: { type: integer, minimum: 0, description: "Guests with credit to refund" }
+        total: { type: number, minimum: 0 }
+
+    DashboardExpiringContracts:
+      type: object
+      description: Active contracts that end in 30 days or less (RN-07, expiringSoon)
+      required: [count, first]
+      properties:
+        count: { type: integer, minimum: 0 }
+        first:
+          type: object
+          nullable: true
+          description: The one that ends first
+          required: [contractId, guestName, environmentCode, endDate]
+          properties:
+            contractId: { type: string, format: uuid }
+            guestName: { type: string, nullable: true }
+            environmentCode: { type: string }
+            endDate: { type: string, format: date }
+
+    DashboardGuestsNotActivated:
+      type: object
+      description: Guests pending activation (RN-32, RN-36)
+      required: [count, expired, first]
+      properties:
+        count: { type: integer, minimum: 0 }
+        expired: { type: integer, minimum: 0, description: "How many of them have their access expired" }
+        first:
+          type: object
+          nullable: true
+          description: An expired one first, otherwise the one whose access ends first
+          required: [guestId, documentType, documentNumber, accessExpiresAt]
+          properties:
+            guestId: { type: string, format: uuid }
+            documentType: { $ref: "#/components/schemas/DocumentType" }
+            documentNumber: { type: string }
+            accessExpiresAt: { type: string, format: date-time, nullable: true }
 
     PaymentQueueItem:
       type: object
