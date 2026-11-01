@@ -2993,10 +2993,12 @@ components:
 
     PagedGuests:
       type: object
-      required: [content, nextCursor]
+      required: [content, nextCursor, pendingActivationCount, onboardingCount]
       properties:
         content: { type: array, items: { $ref: "#/components/schemas/GuestSummary" } }
         nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        pendingActivationCount: { type: integer, minimum: 0, description: "Guests pending activation across all pages, whatever the filters (the A3 notice «Lo que toca ahora», RN-33)" }
+        onboardingCount: { type: integer, minimum: 0, description: "Guests in onboarding across all pages, whatever the filters (the A3 notice, RN-36)" }
 
     PagedExpenses:
       type: object
@@ -3563,6 +3565,7 @@ components:
         status: { $ref: "#/components/schemas/GuestStatus" }
         hasLoginAccess: { type: boolean }
         environment: { anyOf: [{ $ref: "#/components/schemas/EnvironmentRef" }, { type: object, nullable: true, enum: [null] }], description: "Environment it occupies (contract in force or stay, including a coming one), or the last one for an inactive guest; null without any (A3, TAR-237). Only in the administrator's lists" }
+        accessExpiresAt: { type: string, format: date-time, nullable: true, description: "Only for a guest pending activation: when the unused access expires; in the past, A3 says «Acceso vencido» so the administrator regenerates it (A3.4). null otherwise. Only in the administrator's lists" }
 
     OnboardingProgress:
       type: string
@@ -4205,7 +4208,7 @@ components:
     DashboardCharge:
       type: object
       description: A row of «Cobros del mes» in A1 (TAR-236)
-      required: [guestId, guestName, documentType, documentNumber, guestType, environmentCode, contractId, stayId, period, stayStartDate, stayEndDate, amount, dueDate, status, paymentId]
+      required: [guestId, guestName, documentType, documentNumber, guestType, environmentCode, contractId, stayId, period, stayStartDate, stayEndDate, amount, dueDate, status, paymentId, paymentRejected]
       properties:
         guestId: { type: string, format: uuid }
         guestName: { type: string, nullable: true }
@@ -4221,7 +4224,8 @@ components:
         amount: { type: number, description: "Monthly amount or agreed amount of the stay, minus the credit applied (RN-38)" }
         dueDate: { type: string, format: date, description: "Payment day of the period (RN-10) or the check-out date of the stay" }
         status: { type: string, enum: [PAID, UNDER_REVIEW, UNPAID, OVERDUE] }
-        paymentId: { type: string, format: uuid, nullable: true, description: "The live payment when UNDER_REVIEW, to open A5.2" }
+        paymentId: { type: string, format: uuid, nullable: true, description: "The payment of the period, to open A5.2: the live one when UNDER_REVIEW, or the rejected one nobody corrected yet (paymentRejected). Null when the period has no payment" }
+        paymentRejected: { type: boolean, description: "The period (UNPAID or OVERDUE) has a rejected payment not corrected yet (RN-05): A1 says «Pago rechazado» and offers «Corregir pago» (A5.2) instead of «Registrar pago», because the period already has its payment (RN-15)" }
 
     DashboardChargeRef:
       type: object
