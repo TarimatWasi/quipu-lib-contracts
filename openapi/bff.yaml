@@ -1009,7 +1009,7 @@ paths:
       summary: Documents the guest uploaded in the onboarding, with a short-lived signed link (RN-37, CU-27)
       description: >
         Only the administrator sees these files. Each `url` is a signed R2
-        link that expires 5 minutes after the response; ask again for a new one.
+        link that expires 15 minutes after the response; ask again for a new one.
         A document is never deleted or replaced, except on an ARCO request of
         the holder or an upload error (RN-37), only by an administrator and
         with evidence (`deleteGuestDocument`, `replaceGuestDocument`,
@@ -1049,7 +1049,7 @@ paths:
         the commit the old object is deleted, with a persistent retry; no row
         references it any more, so no new signed URL is issued for it. A signed URL
         already handed out for the old object (`listGuestDocuments`) may keep
-        opening it until it expires (at most 5 minutes) or until the old object is
+        opening it until it expires (at most 15 minutes) or until the old object is
         deleted, whichever comes first.
         Concurrency: of two actions on the same `documentId` (replace or delete)
         only one wins; the row is taken by `(guest_id, id)` with a row lock or a
@@ -1968,7 +1968,7 @@ paths:
         `(guest_id of the session, documentId)`: a document of another guest, a
         deleted one or one that never existed answer the same 404
         `RESOURCE_NOT_FOUND`, so the response never reveals whether another
-        guest's document exists. `url` is a signed R2 link that expires 5 minutes
+        guest's document exists. `url` is a signed R2 link that expires 15 minutes
         after the response and is never stored; ask again for a new one. Never
         cacheable.
       security: [{ cookieAuth: [] }]
@@ -2313,7 +2313,7 @@ paths:
         `(guest_id of the session, documentId)`: a document of another guest, a
         deleted one or one that never existed answer the same 404
         `RESOURCE_NOT_FOUND`, so the response never reveals whether another
-        guest's document exists. `url` is a signed R2 link that expires 5 minutes
+        guest's document exists. `url` is a signed R2 link that expires 15 minutes
         after the response and is never stored; ask again for a new one. Never
         cacheable.
       security: [{ cookieAuth: [] }]
@@ -3269,7 +3269,7 @@ components:
         contentType: { type: string, enum: [image/jpeg, image/png, application/pdf] }
         sizeBytes: { type: integer, minimum: 1, maximum: 5242880 }
         uploadedAt: { type: string, format: date-time }
-        url: { type: string, description: "R2 signed URL, expires 5 minutes after the response (RN-37)" }
+        url: { type: string, description: "R2 signed URL, expires 15 minutes after the response (RN-37)" }
         urlExpiresAt: { type: string, format: date-time }
 
     DocumentActionReason:
