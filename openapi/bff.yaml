@@ -45,6 +45,8 @@ tags:
     description: Operating expenses (RF-07)
   - name: admin-dashboard
     description: Home summary and monthly income/expense balance (RF-18)
+  - name: admin-refunds
+    description: Credit left over and refunds of Quipu to guests (RF-22, RN-38, RN-39)
   - name: guest-onboarding
     description: Mandatory, resumable onboarding of a new guest of either type (RF-14, RF-20)
   - name: guest
@@ -1398,9 +1400,10 @@ paths:
       tags: [admin-dashboard]
       summary: Income vs. expenses balance for a month (RF-18, CU-08)
       description: >-
-        Income is the sum of the approved payments attributed to the month plus the fines of the
-        month (RF-19); expenses are the expenses of the month (RF-07); `net` is income minus
-        expenses. A contract payment belongs to its period; a stay payment belongs to the month
+        Income is the sum of the approved payments attributed to the month, by their verified
+        amounts (RN-16), plus the fines of the month (RF-19), minus the refunds dated in the month
+        (RN-39, TAR-240); expenses are the expenses of the month (RF-07); `net` is income minus
+        expenses. Each part carries how many movements it adds up, for the A6 breakdown. A contract payment belongs to its period; a stay payment belongs to the month
         the stay starts (D-68). Pending, rejected or cancelled payments do not
         count. Guests and environments count whether active or inactive. A month without
         movements answers zeros. Amounts in soles with two decimals.
@@ -1419,13 +1422,18 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [month, totalIncome, incomeFromPayments, incomeFromFines, totalExpenses, net]
+                required: [month, totalIncome, incomeFromPayments, paymentsCount, incomeFromFines, finesCount, refundsTotal, refundsCount, totalExpenses, expensesCount, net]
                 properties:
                   month: { type: string, pattern: "^(?!0000)\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09" }
-                  totalIncome: { type: number, multipleOf: 0.01, description: "incomeFromPayments + incomeFromFines" }
-                  incomeFromPayments: { type: number, multipleOf: 0.01, description: "Approved contract and stay payments attributed to the month" }
+                  totalIncome: { type: number, multipleOf: 0.01, description: "incomeFromPayments + incomeFromFines - refundsTotal (RN-11, RN-39)" }
+                  incomeFromPayments: { type: number, multipleOf: 0.01, description: "Approved contract and stay payments attributed to the month, by their verified amounts" }
+                  paymentsCount: { type: integer, minimum: 0 }
                   incomeFromFines: { type: number, multipleOf: 0.01, description: "Fines of the month" }
+                  finesCount: { type: integer, minimum: 0 }
+                  refundsTotal: { type: number, multipleOf: 0.01, minimum: 0, description: "Refunds dated in the month (RN-39)" }
+                  refundsCount: { type: integer, minimum: 0 }
                   totalExpenses: { type: number, multipleOf: 0.01 }
+                  expensesCount: { type: integer, minimum: 0 }
                   net: { type: number, multipleOf: 0.01, description: "totalIncome - totalExpenses; negative when expenses are higher" }
         "400":
           description: "`VALIDATION_ERROR` with `field: month` when it is missing, not a YYYY-MM month or its year is 0000"
@@ -1748,6 +1756,92 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
         "404": { description: "The fine does not exist (`RESOURCE_NOT_FOUND`)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  # ───────────────────────── ADMIN: REFUNDS AND CREDITS (RF-22, RN-38, RN-39, TAR-240) ─────────────────────────
+  /admin/refunds:
+    get:
+      operationId: listRefunds
+      tags: [admin-refunds]
+      summary: Refunds of a month (RF-22, A6 «Devoluciones»)
+      description: >
+        The refunds Quipu made to guests whose date falls in the month: each one counts in the
+        month of its date and is subtracted from that month's income (RN-39, RF-18). Newest first.
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters:
+        - name: month
+          in: query
+          required: true
+          schema: { type: string, pattern: "^(?!0000)\\d{4}-(0[1-9]|1[0-2])$", example: "2026-10" }
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/After"
+      responses:
+        "200":
+          description: One page of the refunds of the month
+          content: { application/json: { schema: { $ref: "#/components/schemas/PagedRefunds" } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+    post:
+      operationId: createRefund
+      tags: [admin-refunds]
+      summary: Register a refund of Quipu to a guest (RF-22, RN-39, A6.5)
+      description: >
+        Returns part or all of a guest's pending credit (RN-38): a partial refund is allowed and
+        the rest stays pending. The amount cannot exceed the pending credit, also when two refunds
+        are registered at the same time (the second one answers 400 with `field: amount`). In the
+        MVP a refund is not edited nor deleted (decided 2026-10-29). Who and when are recorded; no
+        personal data goes to the logs.
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefundInput" }
+      responses:
+        "201":
+          description: Refund registered; the month of its date is recalculated
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+          content: { application/json: { schema: { $ref: "#/components/schemas/Refund" } } }
+        "400":
+          description: >
+            `VALIDATION_ERROR` with its `field`: `guestId`; `amount` (missing, not greater than 0,
+            more than two decimals, or more than the pending credit of the guest); `date` (missing or
+            in the future); `method` (missing, blank or over 50); `note` (over 500)
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: "The guest does not exist (`RESOURCE_NOT_FOUND`)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /admin/credits:
+    get:
+      operationId: listPendingCredits
+      tags: [admin-refunds]
+      summary: Guests with credit to refund (RN-38, A6 and A1 notices)
+      description: >
+        Credit that has no period left to be used in: the contract ended or is in its last period,
+        or it came from a stay of a temporary guest. Oldest first, so A6.5 offers the oldest one.
+        Not paginated: there are few at a time.
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters:
+        - name: pending
+          in: query
+          required: true
+          description: Only credit still to refund; `true` is the only value supported for now
+          schema: { type: boolean, enum: [true] }
+      responses:
+        "200":
+          description: Pending credits, one per guest
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/PendingCredit" } } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
 
   # ───────────────────────── CONTRACT GUEST (RF-04, RF-06, RF-10, CU-16..20) ─────────────────────────
   /guest/account-status:
@@ -2391,10 +2485,11 @@ components:
 
     PagedExpenses:
       type: object
-      required: [content, nextCursor]
+      required: [content, nextCursor, totalCount]
       properties:
         content: { type: array, items: { $ref: "#/components/schemas/Expense" } }
         nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        totalCount: { type: integer, minimum: 0, description: "Expenses of the month, for «Mostrando X de Y» (A6, TAR-240)" }
 
     NextCursor:
       type: string
@@ -3417,6 +3512,61 @@ components:
         code: { type: string, enum: [PAYMENT_PERIOD_NOT_PAYABLE] }
         message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
 
+    RefundInput:
+      type: object
+      required: [guestId, amount, date, method]
+      additionalProperties: false
+      properties:
+        guestId: { type: string, format: uuid }
+        amount: { type: number, exclusiveMinimum: true, minimum: 0, maximum: 99999999.99, multipleOf: 0.01, description: "In soles; at most the pending credit of the guest (RN-38)" }
+        date: { type: string, format: date, description: "When the money was returned; not in the future. The refund counts in this date's month (RN-39)" }
+        method: { type: string, minLength: 1, maxLength: 50, pattern: '\S', description: "Free text, e.g. Yape or transfer; required (RN-39)" }
+        note: { type: string, maxLength: 500, description: "Optional; blank means none" }
+
+    Refund:
+      type: object
+      description: A refund as the BFF answers it, with the guest it went to
+      required: [id, guestId, guestName, environmentCode, amount, date, method, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        guestId: { type: string, format: uuid }
+        guestName: { type: string, nullable: true }
+        environmentCode: { type: string, nullable: true, description: "The environment of the contract or stay the credit came from; null for a stay without environment (TAR-237)" }
+        amount: { type: number }
+        date: { type: string, format: date }
+        method: { type: string }
+        note: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    PagedRefunds:
+      type: object
+      required: [content, nextCursor, totalCount]
+      properties:
+        content: { type: array, items: { $ref: "#/components/schemas/Refund" } }
+        nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        totalCount: { type: integer, minimum: 0, description: "Refunds of the month, for «Mostrando X de Y»" }
+
+    PendingCredit:
+      type: object
+      description: Credit of a guest that has to be refunded (RN-38)
+      required: [guestId, guestName, guestType, environmentCode, amount, origin]
+      properties:
+        guestId: { type: string, format: uuid }
+        guestName: { type: string, nullable: true }
+        guestType: { type: string, enum: [CONTRACT, TEMPORARY] }
+        environmentCode: { type: string, nullable: true }
+        amount: { type: number, description: "Pending credit, after any partial refund" }
+        origin:
+          type: object
+          description: Where the credit came from («Sobró del pago de octubre; su contrato terminó el 15 oct»)
+          required: [paymentId, period, stayStartDate, stayEndDate, contractEndedOn]
+          properties:
+            paymentId: { type: string, format: uuid }
+            period: { type: string, nullable: true, pattern: "^\\d{4}-(0[1-9]|1[0-2])$" }
+            stayStartDate: { type: string, format: date, nullable: true }
+            stayEndDate: { type: string, format: date, nullable: true }
+            contractEndedOn: { type: string, format: date, nullable: true, description: "End or termination date when the contract is over; null otherwise" }
+
     ExpenseInput:
       type: object
       required: [category, amount, month]
@@ -3437,11 +3587,13 @@ components:
 
     Fine:
       type: object
-      description: A fine as the BFF answers it; the fields of `FineInput`, with the same constraints, plus its `id`. The description is left out when there is none.
-      required: [id, guestId, amount, month]
+      description: A fine as the BFF answers it; the fields of `FineInput`, with the same constraints, plus its `id` and who it was charged to. The description is left out when there is none.
+      required: [id, guestId, guestName, environmentCode, amount, month]
       properties:
         id: { type: string, format: uuid }
         guestId: { type: string, format: uuid }
+        guestName: { type: string, nullable: true, description: "For the Multas table of A6 (TAR-240)" }
+        environmentCode: { type: string, nullable: true, description: "The guest's environment when the fine was charged, or its last one; null if it never had one" }
         amount: { type: number, exclusiveMinimum: true, minimum: 0, maximum: 99999999.99, multipleOf: 0.01, description: "In soles, greater than 0, at most two decimals" }
         month: { type: string, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09" }
         description: { type: string, maxLength: 500 }
