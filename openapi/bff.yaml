@@ -2987,10 +2987,12 @@ components:
 
     PagedGuests:
       type: object
-      required: [content, nextCursor]
+      required: [content, nextCursor, pendingActivationCount, onboardingCount]
       properties:
         content: { type: array, items: { $ref: "#/components/schemas/GuestSummary" } }
         nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        pendingActivationCount: { type: integer, minimum: 0, description: "Guests pending activation across all pages, whatever the filters (the A3 notice «Lo que toca ahora», RN-33)" }
+        onboardingCount: { type: integer, minimum: 0, description: "Guests in onboarding across all pages, whatever the filters (the A3 notice, RN-36)" }
 
     PagedExpenses:
       type: object
@@ -3550,6 +3552,7 @@ components:
         status: { $ref: "#/components/schemas/GuestStatus" }
         hasLoginAccess: { type: boolean }
         environment: { anyOf: [{ $ref: "#/components/schemas/EnvironmentRef" }, { type: object, nullable: true, enum: [null] }], description: "Environment it occupies (contract in force or stay, including a coming one), or the last one for an inactive guest; null without any (A3, TAR-237). Only in the administrator's lists" }
+        accessExpiresAt: { type: string, format: date-time, nullable: true, description: "Only for a guest pending activation: when the unused access expires; in the past, A3 says «Acceso vencido» so the administrator regenerates it (A3.4). null otherwise. Only in the administrator's lists" }
 
     OnboardingProgress:
       type: string
