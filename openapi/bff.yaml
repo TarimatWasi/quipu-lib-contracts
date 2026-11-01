@@ -2992,7 +2992,14 @@ components:
         name: { type: string }
         phone: { type: string, nullable: true }
         contactEmail: { type: string, format: email, nullable: true }
-        emergencyContact: { type: object, nullable: true, allOf: [{ $ref: "#/components/schemas/EmergencyContact" }] }
+        emergencyContact:
+          type: object
+          nullable: true
+          description: "The fields of EmergencyContact, inline: an allOf with that schema would reject null (OAS 3.0.3). Null when the guest saved none (RN-29)"
+          properties:
+            name: { type: string }
+            relationship: { type: string }
+            phone: { type: string }
         accountEmail: { type: string, format: email, nullable: true, description: "Where the password recovery link goes (RF-16); read-only for the guest, the administration changes it (A3.9). Null when it has none" }
         documents: { type: array, maxItems: 5, items: { $ref: "#/components/schemas/GuestDocumentRef" } }
         documentsLimit: { type: integer, minimum: 1, description: "How many documents a guest may have (5, RN-37)" }
