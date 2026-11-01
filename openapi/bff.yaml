@@ -2218,7 +2218,7 @@ paths:
         What H5 «Mis datos» shows before editing: the document, the name and contact data the
         guest keeps (RN-17), the account email where the password recovery link goes (read-only:
         only the administration changes it, A3.9) and the documents uploaded during the onboarding
-        or later (RN-37, `uploadOwnDocument`), without their files (TAR-241). Never cacheable.
+        or later (RN-37, `uploadOwnDocument`), without links: each one opens with `getOwnDocument` (TAR-241). Never cacheable.
       security: [{ cookieAuth: [] }]
       x-roles: [GUEST] # guestType CONTRACT
       responses:
@@ -2305,6 +2305,36 @@ paths:
         "429": { $ref: "#/components/responses/TooManyRequests" }
         "503": { $ref: "#/components/responses/FileStorageUnavailable" }
 
+  /guest/documents/{documentId}:
+    get:
+      operationId: getOwnDocument
+      tags: [guest]
+      summary: Open one own document with a short-lived signed link (RN-37, TAR-241)
+      description: >
+        For «Ver documento» in «Mis datos». The document is looked up by
+        `(guest_id of the session, documentId)`: a document of another guest, a
+        deleted one or one that never existed answer the same 404
+        `RESOURCE_NOT_FOUND`, so the response never reveals whether another
+        guest's document exists. `url` is a signed R2 link that expires 5 minutes
+        after the response and is never stored; ask again for a new one. Never
+        cacheable.
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType CONTRACT
+      parameters: [{ $ref: "#/components/parameters/DocumentId" }]
+      responses:
+        "200":
+          description: The document with its signed link
+          headers:
+            Cache-Control: { required: true, schema: { type: string, enum: ["no-store"] } }
+          content: { application/json: { schema: { $ref: "#/components/schemas/GuestDocument" } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/GuestAccessDenied" }
+        "404":
+          description: "The document is not one of the session's guest (`RESOURCE_NOT_FOUND`)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/FileStorageUnavailable" }
+
   /guest/onboarding:
     get:
       operationId: getOnboarding
@@ -2364,7 +2394,8 @@ paths:
       description: >
         One file per call; repeat for more. At most 5 files per guest, each
         JPG, PNG or PDF of up to 5 MB, checked by real content (SEC-07). The
-        guest never gets the file back: only the administrator sees it. The
+        guest opens their own files later from «Mis datos» with a short-lived
+        signed link (`getOwnDocument`, TAR-241), never another guest's. The
         guest can neither delete nor replace a file. The only exception is an
         ARCO request of the holder or an upload error (RN-37): an administrator
         deletes or replaces the file (`POST
@@ -2584,7 +2615,7 @@ paths:
         What T3 «Mis datos» shows before editing: the document, the name and contact data the
         guest keeps (RN-17), the account email where the password recovery link goes (read-only:
         only the administration changes it, A3.9) and the documents uploaded during the onboarding
-        or later (RN-37, `uploadTemporaryOwnDocument`), without their files (TAR-241). Never cacheable.
+        or later (RN-37, `uploadTemporaryOwnDocument`), without links: each one opens with `getTemporaryOwnDocument` (TAR-241). Never cacheable.
       security: [{ cookieAuth: [] }]
       x-roles: [GUEST] # guestType TEMPORARY
       responses:
@@ -2664,6 +2695,36 @@ paths:
                   message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
         "409":
           description: "`DOCUMENT_LIMIT_REACHED` (the guest already has 5 files, RN-37)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/FileStorageUnavailable" }
+
+  /temporary-guest/documents/{documentId}:
+    get:
+      operationId: getTemporaryOwnDocument
+      tags: [temporary-guest]
+      summary: Open one own document with a short-lived signed link (RN-37, TAR-241)
+      description: >
+        For «Ver documento» in «Mis datos». The document is looked up by
+        `(guest_id of the session, documentId)`: a document of another guest, a
+        deleted one or one that never existed answer the same 404
+        `RESOURCE_NOT_FOUND`, so the response never reveals whether another
+        guest's document exists. `url` is a signed R2 link that expires 5 minutes
+        after the response and is never stored; ask again for a new one. Never
+        cacheable.
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType TEMPORARY
+      parameters: [{ $ref: "#/components/parameters/DocumentId" }]
+      responses:
+        "200":
+          description: The document with its signed link
+          headers:
+            Cache-Control: { required: true, schema: { type: string, enum: ["no-store"] } }
+          content: { application/json: { schema: { $ref: "#/components/schemas/GuestDocument" } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/GuestAccessDenied" }
+        "404":
+          description: "The document is not one of the session's guest (`RESOURCE_NOT_FOUND`)"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "429": { $ref: "#/components/responses/TooManyRequests" }
         "503": { $ref: "#/components/responses/FileStorageUnavailable" }
@@ -3648,7 +3709,7 @@ components:
 
     GuestDocumentRef:
       type: object
-      description: "A document as the guest sees it, without a link: only the administrator can open the file (RN-37)"
+      description: "A document in a list, without a link; the guest opens their own with `getOwnDocument` and the administrator with `listGuestDocuments` (RN-37)"
       required: [id, originalName, contentType, sizeBytes, uploadedAt]
       properties:
         id: { type: string, format: uuid }
@@ -3659,7 +3720,7 @@ components:
 
     GuestDocument:
       type: object
-      description: "A document as the administrator sees it: with a short-lived signed link (RN-37)"
+      description: "A document with a short-lived signed link: the administrator gets it for any guest (`listGuestDocuments`) and the guest only for their own (`getOwnDocument`, TAR-241) (RN-37)"
       required: [id, originalName, contentType, sizeBytes, uploadedAt, url, urlExpiresAt]
       properties:
         id: { type: string, format: uuid }
