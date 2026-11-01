@@ -1270,12 +1270,20 @@ paths:
         Newest first. The list carries no `fileUrl` (a signed URL per row would sign N files);
         ask `getContract` for the file of one contract. `status` is derived from the dates at
         the time of the request (America/Lima), so EXPIRED needs no job (RN-07).
+        With `expiringSoon=true` only the ACTIVE contracts with 30 days or fewer to their end
+        date come, ordered by end date, soonest first: A4 «Lo que toca ahora» (how many, whose
+        and when) and its «Por vencer» filter take them from here, so the notice is right
+        whatever page the list is on (D-27).
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       parameters:
         - name: status
           in: query
           schema: { type: string, enum: [ACTIVE, EXPIRED, TERMINATED] }
+        - name: expiringSoon
+          in: query
+          description: "true: only ACTIVE contracts with 30 days or fewer to the end date, soonest first (implies status=ACTIVE; with another status the answer is 400 `VALIDATION_ERROR`)"
+          schema: { type: boolean, default: false }
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/After"
       responses:
