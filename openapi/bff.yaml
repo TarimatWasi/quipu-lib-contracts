@@ -1058,7 +1058,7 @@ paths:
       summary: Documents the guest uploaded in the onboarding, with a short-lived signed link (RN-37, CU-27)
       description: >
         Only the administrator sees these files. Each `url` is a signed R2
-        link that expires 5 minutes after the response; ask again for a new one.
+        link that expires 15 minutes after the response; ask again for a new one.
         A document is never deleted or replaced, except on an ARCO request of
         the holder or an upload error (RN-37), only by an administrator and
         with evidence (`deleteGuestDocument`, `replaceGuestDocument`,
@@ -1098,7 +1098,7 @@ paths:
         the commit the old object is deleted, with a persistent retry; no row
         references it any more, so no new signed URL is issued for it. A signed URL
         already handed out for the old object (`listGuestDocuments`) may keep
-        opening it until it expires (at most 5 minutes) or until the old object is
+        opening it until it expires (at most 15 minutes) or until the old object is
         deleted, whichever comes first.
         Concurrency: of two actions on the same `documentId` (replace or delete)
         only one wins; the row is taken by `(guest_id, id)` with a row lock or a
@@ -2067,7 +2067,7 @@ paths:
                 required: [current, next]
                 properties:
                   current: { $ref: "#/components/schemas/Contract" }
-                  next: { type: object, allOf: [{ $ref: "#/components/schemas/Contract" }], nullable: true }
+                  next: { anyOf: [{ $ref: "#/components/schemas/Contract" }, { type: object, nullable: true, enum: [null] }] }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/GuestAccessDenied" }
         "404": { description: "No contract was ever associated with this guest" }
@@ -2315,7 +2315,7 @@ paths:
         `(guest_id of the session, documentId)`: a document of another guest, a
         deleted one or one that never existed answer the same 404
         `RESOURCE_NOT_FOUND`, so the response never reveals whether another
-        guest's document exists. `url` is a signed R2 link that expires 5 minutes
+        guest's document exists. `url` is a signed R2 link that expires 15 minutes
         after the response and is never stored; ask again for a new one. Never
         cacheable.
       security: [{ cookieAuth: [] }]
@@ -2709,7 +2709,7 @@ paths:
         `(guest_id of the session, documentId)`: a document of another guest, a
         deleted one or one that never existed answer the same 404
         `RESOURCE_NOT_FOUND`, so the response never reveals whether another
-        guest's document exists. `url` is a signed R2 link that expires 5 minutes
+        guest's document exists. `url` is a signed R2 link that expires 15 minutes
         after the response and is never stored; ask again for a new one. Never
         cacheable.
       security: [{ cookieAuth: [] }]
@@ -3206,8 +3206,8 @@ components:
         code: { type: string }
         type: { type: string, enum: [ROOM, CABIN] }
         status: { type: string, enum: [ACTIVE, INACTIVE] }
-        occupant: { type: object, allOf: [{ $ref: "#/components/schemas/Occupant" }], nullable: true, description: "Who occupies it today; null when free (derived from contracts and stays, RN-20)" }
-        nextOccupant: { type: object, allOf: [{ $ref: "#/components/schemas/Occupant" }], nullable: true, description: "A contract or a stay that starts after today; with occupant null, A2 shows «Libre hasta <startDate>»" }
+        occupant: { anyOf: [{ $ref: "#/components/schemas/Occupant" }, { type: object, nullable: true, enum: [null] }], description: "Who occupies it today; null when free (derived from contracts and stays, RN-20)" }
+        nextOccupant: { anyOf: [{ $ref: "#/components/schemas/Occupant" }, { type: object, nullable: true, enum: [null] }], description: "A contract or a stay that starts after today; with occupant null, A2 shows «Libre hasta <startDate>»" }
         freeSince: { type: string, format: date, nullable: true, description: "When it became free (end of the last contract or stay, or the creation of the environment); null when occupied" }
         deactivatedAt: { type: string, format: date-time, nullable: true, description: "When it was deactivated; null when active" }
 
@@ -3549,7 +3549,7 @@ components:
         type: { type: string, enum: [CONTRACT, TEMPORARY] }
         status: { $ref: "#/components/schemas/GuestStatus" }
         hasLoginAccess: { type: boolean }
-        environment: { type: object, allOf: [{ $ref: "#/components/schemas/EnvironmentRef" }], nullable: true, description: "Environment it occupies (contract in force or stay, including a coming one), or the last one for an inactive guest; null without any (A3, TAR-237). Only in the administrator's lists" }
+        environment: { anyOf: [{ $ref: "#/components/schemas/EnvironmentRef" }, { type: object, nullable: true, enum: [null] }], description: "Environment it occupies (contract in force or stay, including a coming one), or the last one for an inactive guest; null without any (A3, TAR-237). Only in the administrator's lists" }
 
     OnboardingProgress:
       type: string
@@ -3728,7 +3728,7 @@ components:
         contentType: { type: string, enum: [image/jpeg, image/png, application/pdf] }
         sizeBytes: { type: integer, minimum: 1, maximum: 5242880 }
         uploadedAt: { type: string, format: date-time }
-        url: { type: string, description: "R2 signed URL, expires 5 minutes after the response (RN-37)" }
+        url: { type: string, description: "R2 signed URL, expires 15 minutes after the response (RN-37)" }
         urlExpiresAt: { type: string, format: date-time }
 
     DocumentActionReason:
@@ -4056,7 +4056,7 @@ components:
         uploadedBy: { type: string, enum: [GUEST, ADMIN], description: "Who added the proof (RN-22)" }
         addedAt: { type: string, format: date-time }
         receivedOn: { type: string, format: date, nullable: true, description: "When the administration received the money (direct payments only)" }
-        file: { type: object, allOf: [{ $ref: "#/components/schemas/ProofFileInfo" }], nullable: true, description: "null for CASH" }
+        file: { anyOf: [{ $ref: "#/components/schemas/ProofFileInfo" }, { type: object, nullable: true, enum: [null] }], description: "null for CASH" }
 
     AdminProof:
       type: object
@@ -4071,7 +4071,7 @@ components:
         uploadedBy: { type: string, enum: [GUEST, ADMIN] }
         addedAt: { type: string, format: date-time }
         receivedOn: { type: string, format: date, nullable: true }
-        file: { type: object, allOf: [{ $ref: "#/components/schemas/ProofFileInfo" }], nullable: true, description: "null for CASH" }
+        file: { anyOf: [{ $ref: "#/components/schemas/ProofFileInfo" }, { type: object, nullable: true, enum: [null] }], description: "null for CASH" }
         fileUrl: { type: string, nullable: true, description: "R2 signed URL, expires in 15 min, forces the download; null for CASH" }
 
     PaymentReview:
@@ -4173,9 +4173,9 @@ components:
         verifiedAmount: { type: number, nullable: true }
         status: { type: string, enum: [PENDING, APPROVED, REJECTED] }
         rejectionReason: { type: string, nullable: true }
-        surplus: { type: object, allOf: [{ $ref: "#/components/schemas/PaymentSurplus" }], nullable: true }
+        surplus: { anyOf: [{ $ref: "#/components/schemas/PaymentSurplus" }, { type: object, nullable: true, enum: [null] }] }
         reviewedAt: { type: string, format: date-time, nullable: true }
-        reviewedBy: { type: object, allOf: [{ $ref: "#/components/schemas/ReviewerRef" }], nullable: true, description: "Who resolved it last (TAR-230); null while pending" }
+        reviewedBy: { anyOf: [{ $ref: "#/components/schemas/ReviewerRef" }, { type: object, nullable: true, enum: [null] }], description: "Who resolved it last (TAR-230); null while pending" }
         submittedAt: { type: string, format: date-time }
         createdAt: { type: string, format: date-time }
         proofs: { type: array, minItems: 1, maxItems: 5, items: { $ref: "#/components/schemas/AdminProof" } }
@@ -4308,7 +4308,7 @@ components:
         verifiedAmount: { type: number, nullable: true }
         creditApplied: { type: number, minimum: 0 }
         amountDue: { type: number }
-        surplus: { type: object, allOf: [{ $ref: "#/components/schemas/PaymentSurplus" }], nullable: true }
+        surplus: { anyOf: [{ $ref: "#/components/schemas/PaymentSurplus" }, { type: object, nullable: true, enum: [null] }] }
         rejectionReason: { type: string, nullable: true }
         submittedAt: { type: string, format: date-time }
         createdAt: { type: string, format: date-time }
@@ -4333,8 +4333,8 @@ components:
       required: [kind, payment, refund]
       properties:
         kind: { type: string, enum: [PAYMENT, REFUND] }
-        payment: { type: object, allOf: [{ $ref: "#/components/schemas/GuestPayment" }], nullable: true, description: "Set when kind=PAYMENT" }
-        refund: { type: object, allOf: [{ $ref: "#/components/schemas/GuestRefund" }], nullable: true, description: "Set when kind=REFUND" }
+        payment: { anyOf: [{ $ref: "#/components/schemas/GuestPayment" }, { type: object, nullable: true, enum: [null] }], description: "Set when kind=PAYMENT" }
+        refund: { anyOf: [{ $ref: "#/components/schemas/GuestRefund" }, { type: object, nullable: true, enum: [null] }], description: "Set when kind=REFUND" }
 
     PagedGuestHistory:
       type: object
@@ -4375,7 +4375,7 @@ components:
         proofCount: { type: integer, minimum: 1, maximum: 5 }
         voucherCount: { type: integer, minimum: 0, maximum: 5, description: "With hasCash, the Comprobantes column («2 vouchers», «1 voucher y efectivo»)" }
         hasCash: { type: boolean }
-        reviewedBy: { type: object, allOf: [{ $ref: "#/components/schemas/ReviewerRef" }], nullable: true, description: "Who resolved it (TAR-230); null while pending" }
+        reviewedBy: { anyOf: [{ $ref: "#/components/schemas/ReviewerRef" }, { type: object, nullable: true, enum: [null] }], description: "Who resolved it (TAR-230); null while pending" }
         submittedAt: { type: string, format: date-time, description: "Last time it was sent; orders the queue" }
         createdAt: { type: string, format: date-time, description: "When the payment was first sent" }
 
