@@ -1863,6 +1863,25 @@ paths:
         "503": { $ref: "#/components/responses/FileStorageUnavailable" }
 
   /guest/profile:
+    get:
+      operationId: getOwnProfile
+      tags: [guest]
+      summary: Own personal and contact data, the account email and the uploaded documents (H5, RN-17)
+      description: >
+        What H5 «Mis datos» shows before editing: the document, the name and contact data the
+        guest keeps (RN-17), the account email where the password recovery link goes (read-only:
+        only the administration changes it, A3.9) and the documents uploaded during the onboarding
+        or later (RN-37), without their files (TAR-241). Never cacheable.
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType CONTRACT
+      responses:
+        "200":
+          description: Own profile
+          headers:
+            Cache-Control: { required: true, schema: { type: string, enum: ["no-store"] } }
+          content: { application/json: { schema: { $ref: "#/components/schemas/OwnProfile" } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/GuestAccessDenied" }
     patch:
       operationId: updateOwnProfile
       tags: [guest]
@@ -2108,6 +2127,25 @@ paths:
         "503": { $ref: "#/components/responses/FileStorageUnavailable" }
 
   /temporary-guest/profile:
+    get:
+      operationId: getOwnProfileTemporary
+      tags: [temporary-guest]
+      summary: Own personal and contact data, the account email and the uploaded documents (T3, RN-17)
+      description: >
+        What T3 «Mis datos» shows before editing: the document, the name and contact data the
+        guest keeps (RN-17), the account email where the password recovery link goes (read-only:
+        only the administration changes it, A3.9) and the documents uploaded during the onboarding
+        or later (RN-37), without their files (TAR-241). Never cacheable.
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType TEMPORARY
+      responses:
+        "200":
+          description: Own profile
+          headers:
+            Cache-Control: { required: true, schema: { type: string, enum: ["no-store"] } }
+          content: { application/json: { schema: { $ref: "#/components/schemas/OwnProfile" } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/GuestAccessDenied" }
     patch:
       operationId: updateOwnProfileTemporary
       tags: [temporary-guest]
@@ -2836,6 +2874,21 @@ components:
         phone: { type: string, minLength: 1, maxLength: 30 }
         contactEmail: { type: string, format: email, maxLength: 200, description: "Optional; without it the password can only be recovered through the administrator (RF-16, RF-17)" }
         emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
+
+    OwnProfile:
+      type: object
+      description: The guest's own data for «Mis datos» (H5, T3)
+      required: [documentType, documentNumber, name, phone, contactEmail, emergencyContact, accountEmail, documents, documentsLimit]
+      properties:
+        documentType: { $ref: "#/components/schemas/DocumentType" }
+        documentNumber: { type: string }
+        name: { type: string }
+        phone: { type: string, nullable: true }
+        contactEmail: { type: string, format: email, nullable: true }
+        emergencyContact: { type: object, nullable: true, allOf: [{ $ref: "#/components/schemas/EmergencyContact" }] }
+        accountEmail: { type: string, format: email, nullable: true, description: "Where the password recovery link goes (RF-16); read-only for the guest, the administration changes it (A3.9). Null when it has none" }
+        documents: { type: array, maxItems: 5, items: { $ref: "#/components/schemas/GuestDocumentRef" } }
+        documentsLimit: { type: integer, minimum: 1, description: "How many documents a guest may have (5, RN-37)" }
 
     ProfileUpdateInput:
       type: object
