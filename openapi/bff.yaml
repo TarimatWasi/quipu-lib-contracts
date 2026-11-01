@@ -4355,11 +4355,11 @@ components:
             guestType: { type: string, enum: [CONTRACT] }
             environmentCode: { type: string }
             period: { type: string }
-        - description: A temporary guest, with no environment and no period (shown as Temporal until TAR-237)
+        - description: A temporary guest, with the environment of the stay and no period (TAR-237)
           additionalProperties: true
           properties:
             guestType: { type: string, enum: [TEMPORARY] }
-            environmentCode: { type: string, nullable: true, enum: [null] }
+            environmentCode: { type: string, nullable: true, description: "The environment of the stay; null only for an old stay registered without environment" }
             period: { type: string, nullable: true, enum: [null] }
       properties:
         id: { type: string, format: uuid }
@@ -4367,7 +4367,7 @@ components:
         guestName: { type: string, nullable: true, description: "null while the guest has not given a name in the onboarding" }
         documentNumber: { type: string }
         guestType: { type: string, enum: [CONTRACT, TEMPORARY] }
-        environmentCode: { type: string, nullable: true, description: "null for a temporary guest (shown as Temporal)" }
+        environmentCode: { type: string, nullable: true, description: "Environment of the contract or of the stay (A5 column Ambiente, «C1»); null only for an old stay registered without environment (TAR-237)" }
         period: { type: string, nullable: true, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09" }
         stayStartDate: { type: string, format: date, nullable: true, description: "Stay dates of a temporary guest («20 – 31 oct»); null for a contract" }
         stayEndDate: { type: string, format: date, nullable: true }
