@@ -1855,6 +1855,25 @@ paths:
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/GuestAccessDenied" }
 
+  /guest/credit:
+    get:
+      operationId: getOwnCredit
+      tags: [guest]
+      summary: Own credit — what is left over to use or to be refunded (RN-38, RN-39, H1)
+      description: >
+        The credit the guest has now and whether Quipu will refund it (no period left where to
+        use it: the contract ended or this is its last period), plus the last refund made. The
+        guest cannot ask for a refund while a period remains where to use the credit (decided
+        2026-11-01). H1 reads it instead of the payment history.
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType CONTRACT
+      responses:
+        "200":
+          description: Own credit
+          content: { application/json: { schema: { $ref: "#/components/schemas/GuestCredit" } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/GuestAccessDenied" }
+
   /guest/contract:
     get:
       operationId: getOwnContract
@@ -3783,11 +3802,28 @@ components:
         status: { type: string, enum: [PAID, UNDER_REVIEW, UNPAID, OVERDUE] }
         dueDate: { type: string, format: date, description: "Payment day of the month, or its last day when the month is shorter (RN-10); the grace days come on top" }
         amount: { type: number, description: "Monthly amount of the contract" }
-        creditApplied: { type: number, minimum: 0, description: "Credit of the guest discounted from this period (RN-38)" }
-        amountDue: { type: number, description: "amount - creditApplied: what is left to pay (H1 «S/ 750.00»)" }
+        creditApplied: { type: number, minimum: 0, description: "Credit of the guest discounted from this period (RN-38), at most `amount`" }
+        amountDue: { type: number, minimum: 0, description: "amount - creditApplied: what is left to pay (H1 «S/ 750.00»). When the credit covers the whole period it is 0 and the period is PAID without a payment (`paymentId` null); the credit left passes on to the next period, month by month (RN-38, decided 2026-11-01)" }
         contractId: { type: string, format: uuid }
-        paymentId: { type: string, format: uuid, nullable: true, description: "The live or last payment of the period, if any" }
+        paymentId: { type: string, format: uuid, nullable: true, description: "The live or last payment of the period, if any; null for a period paid with credit only" }
         rejectionReason: { type: string, nullable: true, description: "Reason of the last rejection while the payment stays rejected (D-34d); a rejected period stays UNPAID or OVERDUE" }
+
+    GuestCredit:
+      type: object
+      description: Credit of a guest with a contract (RN-38, RN-39)
+      required: [balance, toRefund, lastRefund]
+      properties:
+        balance: { type: number, minimum: 0, description: "Credit the guest has now; 0 when none" }
+        toRefund: { type: boolean, description: "true when no period is left where to use it, so Quipu refunds it (A6.5)" }
+        lastRefund:
+          type: object
+          nullable: true
+          description: The last refund Quipu made to the guest (H1 «Te devolvimos S/ 120.00 el 3 de noviembre por Yape»)
+          required: [amount, date, method]
+          properties:
+            amount: { type: number }
+            date: { type: string, format: date }
+            method: { type: string }
 
     StayPaymentStatus:
       type: object
