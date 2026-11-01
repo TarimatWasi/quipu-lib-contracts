@@ -380,9 +380,12 @@ paths:
           application/json:
             schema:
               type: object
-              minProperties: 1
+              description: The `version` loaded and at least one field to change
+              minProperties: 2
               additionalProperties: false
+              required: [version]
               properties:
+                version: { type: integer, format: int64, minimum: 0, description: "The `version` the client loaded. When the environment changed since, the answer is 409 CONCURRENT_MODIFICATION and nothing is saved (BE-SPR-DAT-13)" }
                 code: { type: string, minLength: 1, maxLength: 50, pattern: '^(?=.*\S)[A-Za-z0-9 ._/-]{1,50}$', description: "Same rule as on creation" }
                 type: { type: string, enum: [ROOM, CABIN] }
       responses:
@@ -1817,7 +1820,7 @@ paths:
       parameters: [{ $ref: "#/components/parameters/Id" }]
       requestBody:
         required: true
-        content: { application/json: { schema: { $ref: "#/components/schemas/ExpenseInput" } } }
+        content: { application/json: { schema: { $ref: "#/components/schemas/ExpenseUpdateInput" } } }
       responses:
         "200":
           description: Expense updated
@@ -2812,9 +2815,12 @@ components:
     ConcurrentModification:
       description: >
         Two edits of the same record collided (optimistic locking, BE-SPR-DAT-13):
-        the record changed after the client loaded it. The client reloads the
-        record and retries. The `code` is always `CONCURRENT_MODIFICATION`.
-        Applies to environments, guests and expenses
+        the record changed after the client loaded it. The edits of an
+        environment (A2.4), a pending guest's document and a stay (A3.5) and an
+        expense (A6.1) send back the `version` the client loaded, and a different
+        one is this conflict; elsewhere it is a write that lost a race. The
+        client reloads the record and retries. The `code` is always
+        `CONCURRENT_MODIFICATION`
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ConcurrentModificationError" }
@@ -3141,7 +3147,7 @@ components:
         One visit of a temporary guest (RN-13); the stay of a guest is never edited into a new one,
         a new visit is a new row. It occupies its environment during its dates like a contract
         (RN-20, TAR-237); stays registered before carry no environment
-      required: [id, environmentId, environmentCode, startDate, endDate, agreedAmount, paymentStatus, paymentId]
+      required: [id, environmentId, environmentCode, startDate, endDate, agreedAmount, paymentStatus, paymentId, version]
       properties:
         id: { type: string, format: uuid }
         environmentId: { type: string, format: uuid, nullable: true, description: "null for a stay registered before TAR-237 («Sin ambiente»)" }
@@ -3151,6 +3157,7 @@ components:
         agreedAmount: { type: number, exclusiveMinimum: true, minimum: 0, maximum: 99999999.99, multipleOf: 0.01, description: "In soles, greater than 0, at most two decimals" }
         paymentStatus: { type: string, enum: [PAID, UNDER_REVIEW, UNPAID, OVERDUE], description: "As in StayPaymentStatus: OVERDUE once the exit date passed without an approved payment (A3.2)" }
         paymentId: { type: string, format: uuid, nullable: true, description: "Its payment, if any" }
+        version: { type: integer, format: int64, minimum: 0, readOnly: true, description: "Optimistic-locking version (BE-SPR-DAT-13): A3.5 sends it back when correcting the stay; it grows with every change of the stay" }
 
     StayInput:
       type: object
@@ -3163,10 +3170,12 @@ components:
 
     StayUpdateInput:
       type: object
-      description: At least one field; the resulting dates must stay valid and may not overlap another stay of the guest
-      minProperties: 1
+      description: The `version` loaded and at least one field; the resulting dates must stay valid and may not overlap another stay of the guest
+      minProperties: 2
       additionalProperties: false
+      required: [version]
       properties:
+        version: { type: integer, format: int64, minimum: 0, description: "The `version` the client loaded. When the record changed since, the answer is 409 CONCURRENT_MODIFICATION and nothing is saved (BE-SPR-DAT-13)" }
         environmentId: { type: string, format: uuid, description: "Moves the stay to another free environment (RN-20)" }
         startDate: { type: string, format: date }
         endDate: { type: string, format: date }
@@ -3202,7 +3211,7 @@ components:
 
     Environment:
       type: object
-      required: [id, code, type, status, occupant, nextOccupant, freeSince]
+      required: [id, code, type, status, occupant, nextOccupant, freeSince, version]
       properties:
         id: { type: string, format: uuid }
         code: { type: string }
@@ -3212,6 +3221,7 @@ components:
         nextOccupant: { anyOf: [{ $ref: "#/components/schemas/Occupant" }, { type: object, nullable: true, enum: [null] }], description: "A contract or a stay that starts after today; with occupant null, A2 shows «Libre hasta <startDate>»" }
         freeSince: { type: string, format: date, nullable: true, description: "When it became free (end of the last contract or stay, or the creation of the environment); null when occupied" }
         deactivatedAt: { type: string, format: date-time, nullable: true, description: "When it was deactivated; null when active" }
+        version: { type: integer, format: int64, minimum: 0, readOnly: true, description: "Optimistic-locking version (BE-SPR-DAT-13): A2.4 sends it back in the PATCH; it grows with every change of the environment" }
 
     Occupant:
       type: object
@@ -3480,10 +3490,13 @@ components:
         What the administrator may change: the document, only while the guest
         is pending activation (RN-36). The stays of a temporary guest are managed
         through `/admin/guests/{id}/stays` (RN-13, RN-17). Personal and contact
-        data are the guest's alone (RN-17).
-      minProperties: 1
+        data are the guest's alone (RN-17). Always with the `version` loaded
+        and at least one field to change.
+      minProperties: 2
       additionalProperties: false
+      required: [version]
       properties:
+        version: { type: integer, format: int64, minimum: 0, description: "The `version` the client loaded. When the record changed since, the answer is 409 CONCURRENT_MODIFICATION and nothing is saved (BE-SPR-DAT-13)" }
         documentType: { $ref: "#/components/schemas/DocumentType" }
         documentNumber: { type: string, minLength: 1, maxLength: 20 }
 
@@ -3578,9 +3591,10 @@ components:
 
     PendingGuestDetail:
       type: object
-      required: [id, documentType, documentNumber, name, type, hasLoginAccess, documentCount, paymentHistory, status, onboardingProgress]
+      required: [id, documentType, documentNumber, name, type, hasLoginAccess, documentCount, paymentHistory, status, onboardingProgress, version]
       properties:
         id: { type: string, format: uuid }
+        version: { type: integer, format: int64, minimum: 0, readOnly: true, description: "Optimistic-locking version (BE-SPR-DAT-13): A3.5 sends it back when correcting the document, the only edit of a pending guest (RN-36); it grows with every change of the guest" }
         documentType: { $ref: "#/components/schemas/DocumentType" }
         documentNumber: { type: string }
         name: { type: string, nullable: true, description: "null until the guest completes the personal data step" }
@@ -4562,6 +4576,14 @@ components:
             stayEndDate: { type: string, format: date, nullable: true }
             contractEndedOn: { type: string, format: date, nullable: true, description: "End or termination date when the contract is over; null otherwise" }
 
+    ExpenseUpdateInput:
+      description: An edit of an expense (A6.1) is the whole expense again, with the `version` the client loaded
+      allOf:
+        - $ref: "#/components/schemas/ExpenseInput"
+        - type: object
+          required: [version]
+          properties:
+            version: { type: integer, format: int64, minimum: 0, description: "The `version` the client loaded. When the expense changed since, the answer is 409 CONCURRENT_MODIFICATION and nothing is saved (BE-SPR-DAT-13)" }
     ExpenseInput:
       type: object
       required: [category, amount, month]
@@ -4596,9 +4618,10 @@ components:
     Expense:
       type: object
       description: An expense as the BFF answers it; the fields of `ExpenseInput`, with the same constraints, plus its `id`. The description is left out when there is none.
-      required: [id, category, amount, month]
+      required: [id, category, amount, month, version]
       properties:
         id: { type: string, format: uuid }
+        version: { type: integer, format: int64, minimum: 0, readOnly: true, description: "Optimistic-locking version (BE-SPR-DAT-13): A6.1 sends it back when editing; it grows with every change of the expense" }
         category: { type: string, enum: [UTILITIES, MAINTENANCE, CLEANING_SUPPLIES, TAXES_FEES], description: "UTILITIES: electricity, water, internet. MAINTENANCE: maintenance and repairs. CLEANING_SUPPLIES: cleaning and supplies. TAXES_FEES: taxes and fees (D-26)" }
         amount: { type: number, exclusiveMinimum: true, minimum: 0, maximum: 99999999.99, multipleOf: 0.01, description: "In soles, greater than 0, at most two decimals" }
         month: { type: string, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09" }
