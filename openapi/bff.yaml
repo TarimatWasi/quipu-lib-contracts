@@ -177,9 +177,11 @@ paths:
       description: >
         `currentPassword` is optional only while the session still has the
         password change pending (first login with a temporary password) and
-        required otherwise. On success the response sets a fresh `sessionToken`
-        cookie without the pending mark. A new password equal to the current
-        (or temporary) one is rejected.
+        required otherwise (A0.6, any administrator or guest from the account
+        menu). On success the response sets a fresh `sessionToken` cookie
+        without the pending mark, and every other session of the account stops
+        being valid (decided 2026-11-01). A new password equal to the current
+        (or temporary) one is rejected. Rate limited per session user.
       security: [{ cookieAuth: [] }]
       requestBody:
         required: true
@@ -203,6 +205,14 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "401": { $ref: "#/components/responses/NoSession" }
+        "403":
+          description: >
+            `AUTH_INVALID_CREDENTIALS` with `field: currentPassword` when the current password is
+            wrong (A0.6, as in the re-authentication of the administrators, TAR-127)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /auth/forgot-password:
     post:
@@ -245,6 +255,16 @@ paths:
               properties:
                 code: { type: string, maxLength: 100, description: "Single-use code from the link in the recovery email" }
                 newPassword: { type: string, minLength: 8, maxLength: 128, description: "At most 72 bytes in UTF-8 (bcrypt limit)" }
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                  pattern: '\S'
+                  description: >
+                    Full name of an administrator that activates the account created by another one
+                    (RF-22, A0.5, decided 2026-11-01): required while the account has no name, and
+                    ignored once it has one. The email of an account without name links to the
+                    administrator activation screen instead of the recovery one.
       responses:
         "204": { description: Password reset; the code can no longer be used }
         "400":
@@ -253,7 +273,9 @@ paths:
             code, or a disabled account: one generic answer for all of them),
             `AUTH_WEAK_PASSWORD` (with `field: newPassword`: too short, too long or
             equal to a live link or temporary password of the account; the code
-            is not consumed) or `VALIDATION_ERROR` if a field is missing
+            is not consumed) or `VALIDATION_ERROR` if a field is missing (also
+            `field: name` for an administrator account without name; the code is
+            not consumed)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -459,6 +481,7 @@ paths:
               schema: { type: array, items: { $ref: "#/components/schemas/AdministratorSummary" } }
               example:
                 - id: 3f2b8c1e-7a4d-4e6b-9c0a-1d2e3f4a5b6c
+                  name: Rosa Quispe
                   documentType: DNI
                   documentNumber: "*****678"
                   email: admin.uno@example.com
@@ -466,6 +489,7 @@ paths:
                   createdAt: "2026-01-15T14:00:00Z"
                   self: true
                 - id: 8a7b6c5d-4e3f-4a1b-8c2d-3e4f5a6b7c8d
+                  name: null
                   documentType: CE
                   documentNumber: "******321"
                   email: admin.dos@example.com
@@ -2723,9 +2747,10 @@ components:
     AdministratorSummary:
       type: object
       description: An administrator in the list (TAR-127)
-      required: [id, documentType, documentNumber, email, status, createdAt, self]
+      required: [id, name, documentType, documentNumber, email, status, createdAt, self]
       properties:
         id: { type: string, format: uuid }
+        name: { type: string, nullable: true, description: "Full name the administrator wrote when activating the account (A0.5); null while it has not activated it («Sin activar» in A7)" }
         documentType: { $ref: "#/components/schemas/DocumentType" }
         documentNumber:
           type: string
