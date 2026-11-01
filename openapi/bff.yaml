@@ -1871,7 +1871,7 @@ paths:
         What H5 «Mis datos» shows before editing: the document, the name and contact data the
         guest keeps (RN-17), the account email where the password recovery link goes (read-only:
         only the administration changes it, A3.9) and the documents uploaded during the onboarding
-        or later (RN-37), without their files (TAR-241). Never cacheable.
+        or later (RN-37, `uploadOwnDocument`), without their files (TAR-241). Never cacheable.
       security: [{ cookieAuth: [] }]
       x-roles: [GUEST] # guestType CONTRACT
       responses:
@@ -1905,6 +1905,59 @@ paths:
   # ───────────────────────── GUEST ONBOARDING (RF-14, RF-20, CU-11, CU-24..26) ─────────────────────────
   # Open to a GUEST of either type. Until the onboarding is complete every other
   # /guest/** and /temporary-guest/** operation answers 403 AUTH_ONBOARDING_REQUIRED.
+  /guest/documents:
+    post:
+      operationId: uploadOwnDocument
+      tags: [guest]
+      summary: Upload one more own document from «Mis datos» after the onboarding (RN-37, TAR-242)
+      description: >
+        Same rules as the onboarding upload (`uploadOnboardingDocument`): one file per
+        call, JPG, PNG or PDF of up to 5 MB checked by real content (SEC-07, RF-15), and
+        at most 5 files per guest counting the ones of the onboarding (RN-37). Only for
+        a guest whose onboarding is complete (RN-33); before that the guest uses the
+        onboarding step. The guest can neither delete nor replace a file: an
+        administrator does it on an ARCO request or an upload error, with evidence
+        (`deleteGuestDocument`, `replaceGuestDocument`). Under the
+        `Origin`/`Sec-Fetch-Site` check of the multipart routes (ADR-006).
+        Rate limited per session user, checked before the file is read: over the limit the answer is 429 `RATE_LIMITED` with a `Retry-After` header.
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType CONTRACT
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary, description: "JPG/PNG/PDF, ≤5MB, checked by content (RF-15)" }
+      responses:
+        "201":
+          description: Document stored; it appears in `documents` of the own profile
+          content: { application/json: { schema: { $ref: "#/components/schemas/GuestDocumentRef" } } }
+        "400":
+          description: "`DOCUMENT_INVALID_FILE` (type or size not allowed, RF-15)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403":
+          description: >
+            `AUTH_ONBOARDING_REQUIRED` (the onboarding is not complete, RN-33),
+            `AUTH_PASSWORD_CHANGE_REQUIRED` (temporary password not changed, RF-12) or
+            `AUTH_FORBIDDEN` (a TEMPORARY guest, RN-09). On the multipart upload, `AUTH_FORBIDDEN` is also returned when the request carries neither an `Origin` header nor `Sec-Fetch-Site: same-origin` (ADR-006)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, message]
+                properties:
+                  code: { type: string, enum: [AUTH_ONBOARDING_REQUIRED, AUTH_PASSWORD_CHANGE_REQUIRED, AUTH_FORBIDDEN] }
+                  message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+        "409":
+          description: "`DOCUMENT_LIMIT_REACHED` (the guest already has 5 files, RN-37)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/FileStorageUnavailable" }
+
   /guest/onboarding:
     get:
       operationId: getOnboarding
@@ -2135,7 +2188,7 @@ paths:
         What T3 «Mis datos» shows before editing: the document, the name and contact data the
         guest keeps (RN-17), the account email where the password recovery link goes (read-only:
         only the administration changes it, A3.9) and the documents uploaded during the onboarding
-        or later (RN-37), without their files (TAR-241). Never cacheable.
+        or later (RN-37, `uploadTemporaryOwnDocument`), without their files (TAR-241). Never cacheable.
       security: [{ cookieAuth: [] }]
       x-roles: [GUEST] # guestType TEMPORARY
       responses:
@@ -2165,6 +2218,59 @@ paths:
         "403": { $ref: "#/components/responses/GuestAccessDenied" }
         "409": { $ref: "#/components/responses/GuestEmailTaken" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /temporary-guest/documents:
+    post:
+      operationId: uploadTemporaryOwnDocument
+      tags: [temporary-guest]
+      summary: Upload one more own document from «Mis datos» after the onboarding (RN-37, TAR-242)
+      description: >
+        Same rules as the onboarding upload (`uploadOnboardingDocument`): one file per
+        call, JPG, PNG or PDF of up to 5 MB checked by real content (SEC-07, RF-15), and
+        at most 5 files per guest counting the ones of the onboarding (RN-37). Only for
+        a guest whose onboarding is complete (RN-33); before that the guest uses the
+        onboarding step. The guest can neither delete nor replace a file: an
+        administrator does it on an ARCO request or an upload error, with evidence
+        (`deleteGuestDocument`, `replaceGuestDocument`). Under the
+        `Origin`/`Sec-Fetch-Site` check of the multipart routes (ADR-006).
+        Rate limited per session user, checked before the file is read: over the limit the answer is 429 `RATE_LIMITED` with a `Retry-After` header.
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType TEMPORARY
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary, description: "JPG/PNG/PDF, ≤5MB, checked by content (RF-15)" }
+      responses:
+        "201":
+          description: Document stored; it appears in `documents` of the own profile
+          content: { application/json: { schema: { $ref: "#/components/schemas/GuestDocumentRef" } } }
+        "400":
+          description: "`DOCUMENT_INVALID_FILE` (type or size not allowed, RF-15)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403":
+          description: >
+            `AUTH_ONBOARDING_REQUIRED` (the onboarding is not complete, RN-33),
+            `AUTH_PASSWORD_CHANGE_REQUIRED` (temporary password not changed, RF-12) or
+            `AUTH_FORBIDDEN` (a CONTRACT guest, RN-09). On the multipart upload, `AUTH_FORBIDDEN` is also returned when the request carries neither an `Origin` header nor `Sec-Fetch-Site: same-origin` (ADR-006)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, message]
+                properties:
+                  code: { type: string, enum: [AUTH_ONBOARDING_REQUIRED, AUTH_PASSWORD_CHANGE_REQUIRED, AUTH_FORBIDDEN] }
+                  message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+        "409":
+          description: "`DOCUMENT_LIMIT_REACHED` (the guest already has 5 files, RN-37)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/FileStorageUnavailable" }
 
 components:
   securitySchemes:
@@ -2314,10 +2420,11 @@ components:
       description: >
         `AUTH_FORBIDDEN`: the session is not an administrator (RN-08), or the request
         carries neither an `Origin` header nor `Sec-Fetch-Site: same-origin`, or they
-        name another site (ADR-006). `replaceGuestDocument` is the sixth route of the
+        name another site (ADR-006). `replaceGuestDocument` is one route of the
         exact set of multipart routes under that check: `createContract`,
         `createDirectPayment`, `uploadPaymentVoucher`, `uploadOnboardingDocument`,
-        `uploadTemporaryVoucher` and `replaceGuestDocument`. `deleteGuestDocument`
+        `uploadTemporaryVoucher`, `uploadOwnDocument`, `uploadTemporaryOwnDocument`
+        and `replaceGuestDocument`. `deleteGuestDocument`
         is the only JSON route under the same check, because it deletes personal
         data irreversibly
       content:
