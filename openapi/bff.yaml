@@ -264,13 +264,27 @@ paths:
     get:
       operationId: listEnvironments
       tags: [admin-environments]
-      summary: List environments (RF-01)
+      summary: List environments (RF-01), with their occupancy (RN-20, TAR-237)
+      description: >
+        Each environment says who occupies it today (a contract in force or a stay of a temporary
+        guest), who comes next (a contract or a stay that starts later: A2 shows «Libre hasta …»)
+        and, when it is free, since when. With `freeFrom` and `freeTo` the list keeps only the
+        environments free for the whole range, to choose one for a stay (A3.5) or a contract (A4.1);
+        `freeTo` absent means open-ended (a contract without end date).
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       parameters:
         - name: status
           in: query
           schema: { type: string, enum: [ACTIVE, INACTIVE, ALL], default: ACTIVE }
+        - name: freeFrom
+          in: query
+          description: First day the environment must be free
+          schema: { type: string, format: date }
+        - name: freeTo
+          in: query
+          description: Last day the environment must be free; requires `freeFrom`
+          schema: { type: string, format: date }
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/After"
       responses:
@@ -297,7 +311,7 @@ paths:
               type: object
               required: [code, type]
               properties:
-                code: { type: string, minLength: 1, maxLength: 50, pattern: '\S', description: "Unique, e.g. \"201\". Surrounding spaces are ignored; at least one character is not a space" }
+                code: { type: string, minLength: 1, maxLength: 50, pattern: '^(?=.*\S)[A-Za-z0-9 ._/-]{1,50}$', description: "Unique, e.g. \"201\". Only letters, digits, space and . _ / - (decided 2026-10-31, TAR-237); surrounding spaces are ignored; at least one character is not a space" }
                 type: { type: string, enum: [ROOM, CABIN] }
       responses:
         "201":
@@ -345,7 +359,7 @@ paths:
               minProperties: 1
               additionalProperties: false
               properties:
-                code: { type: string, minLength: 1, maxLength: 50, pattern: '\S' }
+                code: { type: string, minLength: 1, maxLength: 50, pattern: '^(?=.*\S)[A-Za-z0-9 ._/-]{1,50}$', description: "Same rule as on creation" }
                 type: { type: string, enum: [ROOM, CABIN] }
       responses:
         "200":
@@ -390,7 +404,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: >
-            `ENVIRONMENT_OCCUPIED` (the environment has a contract in force, RN-12, RN-20) or
+            `ENVIRONMENT_OCCUPIED` (the environment has a contract in force or a stay, now or later, RN-12, RN-20) or
             `CONCURRENT_MODIFICATION` (see the `ConcurrentModification` response)
           content:
             application/json:
@@ -624,6 +638,10 @@ paths:
           in: query
           description: "CURRENT is every guest except the inactive ones (pending activation, onboarding and active)"
           schema: { type: string, enum: [CURRENT, PENDING_ACTIVATION, ONBOARDING, ACTIVE, INACTIVE, ALL], default: CURRENT }
+        - name: withoutContract
+          in: query
+          description: "true: only guests without a contract in force, to choose one when loading a contract (A4.1, TAR-237)"
+          schema: { type: boolean }
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/After"
       responses:
@@ -862,7 +880,9 @@ paths:
         "409":
           description: >
             `GUEST_NOT_ACTIVE` (the guest is not active, RN-35), `GUEST_NOT_TEMPORARY` (only temporary
-            guests have stays) or `STAY_OVERLAP` (the dates cross another stay of the guest)
+            guests have stays), `STAY_OVERLAP` (the dates cross another stay of the guest) or
+            `ENVIRONMENT_OCCUPIED` (the environment is taken in those dates by a contract or another
+            stay, or it is inactive; message «El ambiente ya está ocupado en esas fechas», TAR-237)
           content:
             application/json:
               schema:
@@ -870,12 +890,13 @@ paths:
                   - $ref: "#/components/schemas/GuestNotActiveError"
                   - $ref: "#/components/schemas/GuestNotTemporaryError"
                   - $ref: "#/components/schemas/StayOverlapError"
+                  - $ref: "#/components/schemas/EnvironmentOccupiedError"
 
   /admin/guests/{id}/stays/{stayId}:
     patch:
       operationId: updateGuestStay
       tags: [admin-guests]
-      summary: Correct the dates or the agreed amount of a stay (RN-17, CU-31)
+      summary: Correct the environment, the dates or the agreed amount of a stay (RN-17, CU-31, TAR-237)
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       parameters:
@@ -895,13 +916,15 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: >
-            `STAY_OVERLAP` (the new dates cross another stay of the guest) or `CONCURRENT_MODIFICATION`
+            `STAY_OVERLAP` (the new dates cross another stay of the guest), `ENVIRONMENT_OCCUPIED`
+            (the environment is taken in the new dates, TAR-237) or `CONCURRENT_MODIFICATION`
             (see the `ConcurrentModification` response)
           content:
             application/json:
               schema:
                 anyOf:
                   - $ref: "#/components/schemas/StayOverlapError"
+                  - $ref: "#/components/schemas/EnvironmentOccupiedError"
                   - $ref: "#/components/schemas/ConcurrentModificationError"
 
   /admin/guests/{id}/account-email:
@@ -1272,12 +1295,20 @@ paths:
         Newest first. The list carries no `fileUrl` (a signed URL per row would sign N files);
         ask `getContract` for the file of one contract. `status` is derived from the dates at
         the time of the request (America/Lima), so EXPIRED needs no job (RN-07).
+        With `expiringSoon=true` only the ACTIVE contracts with 30 days or fewer to their end
+        date come, ordered by end date, soonest first: A4 «Lo que toca ahora» (how many, whose
+        and when) and its «Por vencer» filter take them from here, so the notice is right
+        whatever page the list is on (D-27).
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       parameters:
         - name: status
           in: query
           schema: { type: string, enum: [ACTIVE, EXPIRED, TERMINATED] }
+        - name: expiringSoon
+          in: query
+          description: "true: only ACTIVE contracts with 30 days or fewer to the end date, soonest first (implies status=ACTIVE; with another status the answer is 400 `VALIDATION_ERROR`)"
+          schema: { type: boolean, default: false }
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/After"
       responses:
@@ -1331,7 +1362,9 @@ paths:
             guest of type CONTRACT takes a contract, the temporary one has stays, RN-13),
             `GUEST_HAS_PENDING_DEBT` (the guest owes periods, RN-25), `ENVIRONMENT_INACTIVE` (the
             environment is inactive and takes no new contract, RF-01) or `ENVIRONMENT_OCCUPIED`
-            (the environment already has a contract in force, RN-20). The check order is: guest
+            (the dates cross another contract not terminated or a stay of the environment, RN-20; a
+            renewal that starts after the end of the contract in force is accepted, decided
+            2026-10-31). The check order is: guest
             state, guest type, debt, environment state, environment occupancy
           content:
             application/json:
@@ -1355,7 +1388,7 @@ paths:
       parameters: [{ $ref: "#/components/parameters/Id" }]
       responses:
         "200":
-          description: "Contract detail (never cacheable: it carries a freshly signed file URL)"
+          description: "Contract detail (never cacheable: it carries a freshly signed file URL, null if the storage could not sign it)"
           headers:
             Cache-Control: { required: true, schema: { type: string, enum: ["no-store"] } }
           content: { application/json: { schema: { $ref: "#/components/schemas/Contract" } } }
@@ -1363,7 +1396,6 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "503": { $ref: "#/components/responses/FileStorageUnavailable" }
 
   /admin/contracts/{id}/terminate:
     post:
@@ -1879,22 +1911,33 @@ paths:
       operationId: getOwnContract
       tags: [guest]
       summary: >
-        Own contract, regardless of status — shown read-only even when
+        Own contracts, regardless of status — shown read-only even when
         EXPIRED or TERMINATED (CU-18, RN-26). A guest never loses visibility
         of their own contract; only the ability to act on it changes with
         status (e.g. voucher upload requires ACTIVE, see /guest/payments).
+      description: >
+        `current` is the contract in force today, or the one that starts first if none is running
+        yet (RN-07), or the latest one if all ended. `next` is a renewal already loaded that starts
+        after `current` ends (RN-20); H2 shows it below as «Tu próximo contrato» (decided
+        2026-10-31, TAR-237).
       security: [{ cookieAuth: [] }]
       x-roles: [GUEST] # guestType CONTRACT
       responses:
         "200":
-          description: "Own contract, whatever its status (never cacheable: it carries a freshly signed file URL)"
+          description: "Own contracts (never cacheable: they carry freshly signed file URLs)"
           headers:
             Cache-Control: { required: true, schema: { type: string, enum: ["no-store"] } }
-          content: { application/json: { schema: { $ref: "#/components/schemas/Contract" } } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [current, next]
+                properties:
+                  current: { $ref: "#/components/schemas/Contract" }
+                  next: { type: object, allOf: [{ $ref: "#/components/schemas/Contract" }], nullable: true }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/GuestAccessDenied" }
         "404": { description: "No contract was ever associated with this guest" }
-        "503": { $ref: "#/components/responses/FileStorageUnavailable" }
 
   /guest/payments:
     get:
@@ -2598,10 +2641,11 @@ components:
   schemas:
     PagedEnvironments:
       type: object
-      required: [content, nextCursor]
+      required: [content, nextCursor, freeCount]
       properties:
         content: { type: array, items: { $ref: "#/components/schemas/Environment" } }
         nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        freeCount: { type: integer, minimum: 0, description: "Active environments free today and with nothing coming, across all pages (the A2 notice)" }
 
     PagedGuests:
       type: object
@@ -2653,10 +2697,14 @@ components:
 
     EnvironmentOccupiedError:
       type: object
-      description: The environment has a contract in force (RN-12, RN-20). The `code` is always `ENVIRONMENT_OCCUPIED`
+      description: >
+        The environment is occupied in those dates by a contract in force or a stay, now or later
+        (RN-12, RN-20, TAR-237). `occupant` says by whom, for the dialog and its link. The `code`
+        is always `ENVIRONMENT_OCCUPIED`
       required: [code, message]
       properties:
         code: { type: string, enum: [ENVIRONMENT_OCCUPIED] }
+        occupant: { $ref: "#/components/schemas/Occupant" }
         message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
 
     GuestInactiveError:
@@ -2733,21 +2781,41 @@ components:
           minItems: 1
           description: The periods owed, oldest first, so the UI can list them and offer the direct payment (RN-23)
           items: { type: string, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09" }
+        debts:
+          type: array
+          description: Everything owed with its amount, oldest first, including the unpaid stays of a temporary guest (TAR-237)
+          items:
+            type: object
+            required: [period, stayId, stayStartDate, stayEndDate, amountDue]
+            properties:
+              period: { type: string, nullable: true, pattern: "^\\d{4}-(0[1-9]|1[0-2])$" }
+              stayId: { type: string, format: uuid, nullable: true }
+              stayStartDate: { type: string, format: date, nullable: true }
+              stayEndDate: { type: string, format: date, nullable: true }
+              amountDue: { type: number }
 
     Stay:
       type: object
-      description: One visit of a temporary guest (RN-13); the stay of a guest is never edited into a new one, a new visit is a new row
-      required: [id, startDate, endDate, agreedAmount]
+      description: >
+        One visit of a temporary guest (RN-13); the stay of a guest is never edited into a new one,
+        a new visit is a new row. It occupies its environment during its dates like a contract
+        (RN-20, TAR-237); stays registered before carry no environment
+      required: [id, environmentId, environmentCode, startDate, endDate, agreedAmount, paymentStatus, paymentId]
       properties:
         id: { type: string, format: uuid }
+        environmentId: { type: string, format: uuid, nullable: true, description: "null for a stay registered before TAR-237 («Sin ambiente»)" }
+        environmentCode: { type: string, nullable: true }
         startDate: { type: string, format: date }
         endDate: { type: string, format: date, description: "On or after startDate" }
         agreedAmount: { type: number, exclusiveMinimum: true, minimum: 0, maximum: 99999999.99, multipleOf: 0.01, description: "In soles, greater than 0, at most two decimals" }
+        paymentStatus: { type: string, enum: [PAID, UNDER_REVIEW, UNPAID, OVERDUE], description: "As in StayPaymentStatus: OVERDUE once the exit date passed without an approved payment (A3.2)" }
+        paymentId: { type: string, format: uuid, nullable: true, description: "Its payment, if any" }
 
     StayInput:
       type: object
-      required: [startDate, endDate, agreedAmount]
+      required: [environmentId, startDate, endDate, agreedAmount]
       properties:
+        environmentId: { type: string, format: uuid, description: "An active environment free for the whole stay (RN-20, TAR-237); see listEnvironments with freeFrom and freeTo" }
         startDate: { type: string, format: date }
         endDate: { type: string, format: date, description: "On or after startDate" }
         agreedAmount: { type: number, exclusiveMinimum: true, minimum: 0, maximum: 99999999.99, multipleOf: 0.01, description: "In soles, greater than 0, at most two decimals" }
@@ -2758,9 +2826,10 @@ components:
       minProperties: 1
       additionalProperties: false
       properties:
+        environmentId: { type: string, format: uuid, description: "Moves the stay to another free environment (RN-20)" }
         startDate: { type: string, format: date }
         endDate: { type: string, format: date }
-        agreedAmount: { type: number, exclusiveMinimum: true, minimum: 0, maximum: 99999999.99, multipleOf: 0.01 }
+        agreedAmount: { type: number, exclusiveMinimum: true, minimum: 0, maximum: 99999999.99, multipleOf: 0.01, description: "Can be corrected even when the stay has a payment: the review compares with the new amount (decided 2026-10-30)" }
 
     PagedStays:
       type: object
@@ -2792,12 +2861,40 @@ components:
 
     Environment:
       type: object
-      required: [id, code, type, status]
+      required: [id, code, type, status, occupant, nextOccupant, freeSince]
       properties:
         id: { type: string, format: uuid }
         code: { type: string }
         type: { type: string, enum: [ROOM, CABIN] }
         status: { type: string, enum: [ACTIVE, INACTIVE] }
+        occupant: { type: object, allOf: [{ $ref: "#/components/schemas/Occupant" }], nullable: true, description: "Who occupies it today; null when free (derived from contracts and stays, RN-20)" }
+        nextOccupant: { type: object, allOf: [{ $ref: "#/components/schemas/Occupant" }], nullable: true, description: "A contract or a stay that starts after today; with occupant null, A2 shows «Libre hasta <startDate>»" }
+        freeSince: { type: string, format: date, nullable: true, description: "When it became free (end of the last contract or stay, or the creation of the environment); null when occupied" }
+        deactivatedAt: { type: string, format: date-time, nullable: true, description: "When it was deactivated; null when active" }
+
+    Occupant:
+      type: object
+      description: A contract or a stay that occupies an environment (RN-20, TAR-237)
+      required: [kind, guestId, guestName, contractId, stayId, startDate, endDate]
+      properties:
+        kind: { type: string, enum: [CONTRACT, STAY] }
+        guestId: { type: string, format: uuid }
+        guestName: { type: string, nullable: true }
+        contractId: { type: string, format: uuid, nullable: true, description: "Set when kind=CONTRACT («Ver contrato vigente»)" }
+        stayId: { type: string, format: uuid, nullable: true, description: "Set when kind=STAY («Ver huésped»)" }
+        startDate: { type: string, format: date }
+        endDate: { type: string, format: date, nullable: true, description: "null for a contract without end date" }
+
+    EnvironmentRef:
+      type: object
+      description: The environment a guest occupies, with its validity (A3 column Ambiente)
+      required: [code, type, kind, startDate, endDate]
+      properties:
+        code: { type: string }
+        type: { type: string, enum: [ROOM, CABIN] }
+        kind: { type: string, enum: [CONTRACT, STAY] }
+        startDate: { type: string, format: date }
+        endDate: { type: string, format: date, nullable: true }
 
     SessionInfo:
       description: >
@@ -2978,9 +3075,9 @@ components:
       required: [documentType, documentNumber, type, accessMode]
       properties:
         documentType: { $ref: "#/components/schemas/DocumentType" }
-        documentNumber: { type: string, minLength: 1, maxLength: 20 }
+        documentNumber: { type: string, minLength: 1, maxLength: 20, pattern: "^[A-Za-z0-9-]{1,20}$", description: "A DNI is exactly 8 digits; a CE or a passport, letters, digits or hyphen. A DNI with another shape is 400 VALIDATION_ERROR with field documentNumber (TAR-237)" }
         type: { type: string, enum: [CONTRACT, TEMPORARY] }
-        phone: { type: string, maxLength: 30, description: "Optional, to notify the guest" }
+        phone: { type: string, maxLength: 30, pattern: "^\\+?[0-9][0-9 -]{5,28}$", description: "Optional, to notify the guest: digits, spaces and hyphens, with an optional + prefix" }
         contactEmail: { type: string, format: email, maxLength: 200, description: "Optional: if present the access (the link or the temporary password, depending on accessMode) is also sent by email (RN-19)" }
         accessMode: { $ref: "#/components/schemas/AccessMode" }
 
@@ -3055,7 +3152,7 @@ components:
       properties:
         name: { type: string, minLength: 1, maxLength: 200 }
         phone: { type: string, minLength: 1, maxLength: 30 }
-        contactEmail: { type: string, format: email, maxLength: 200, description: "Optional; without it the password can only be recovered through the administrator (RF-16, RF-17)" }
+        contactEmail: { type: string, format: email, maxLength: 200, description: "Optional contact email, independent of the account email used to recover the password (D-76, RF-16, A3.9)" }
         emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
 
     ProfileUpdateInput:
@@ -3090,6 +3187,7 @@ components:
         type: { type: string, enum: [CONTRACT, TEMPORARY] }
         status: { $ref: "#/components/schemas/GuestStatus" }
         hasLoginAccess: { type: boolean }
+        environment: { type: object, allOf: [{ $ref: "#/components/schemas/EnvironmentRef" }], nullable: true, description: "Environment it occupies (contract in force or stay, including a coming one), or the last one for an inactive guest; null without any (A3, TAR-237). Only in the administrator's lists" }
 
     OnboardingProgress:
       type: string
@@ -3125,6 +3223,7 @@ components:
         hasLoginAccess: { type: boolean }
         phone: { type: string, nullable: true }
         contactEmail: { type: string, nullable: true }
+        accountEmail: { type: string, nullable: true, description: "Email of the account, for the password recovery (A3.9, PUT …/account-email); independent of the contact email (D-76)" }
         emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
         stayStartDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
         stayEndDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
@@ -3151,6 +3250,7 @@ components:
         hasLoginAccess: { type: boolean }
         phone: { type: string, nullable: true }
         contactEmail: { type: string, nullable: true }
+        accountEmail: { type: string, nullable: true, description: "Email of the account, for the password recovery (A3.9, PUT …/account-email); independent of the contact email (D-76)" }
         emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
         stayStartDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
         stayEndDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
@@ -3177,6 +3277,7 @@ components:
         hasLoginAccess: { type: boolean }
         phone: { type: string }
         contactEmail: { type: string, nullable: true }
+        accountEmail: { type: string, nullable: true, description: "Email of the account, for the password recovery (A3.9, PUT …/account-email); independent of the contact email (D-76)" }
         emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
         stayStartDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
         stayEndDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
@@ -3203,6 +3304,7 @@ components:
         hasLoginAccess: { type: boolean }
         phone: { type: string }
         contactEmail: { type: string, nullable: true }
+        accountEmail: { type: string, nullable: true, description: "Email of the account, for the password recovery (A3.9, PUT …/account-email); independent of the contact email (D-76)" }
         emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
         stayStartDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
         stayEndDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
@@ -3228,6 +3330,7 @@ components:
         hasLoginAccess: { type: boolean }
         phone: { type: string, nullable: true }
         contactEmail: { type: string, nullable: true }
+        accountEmail: { type: string, nullable: true, description: "Email of the account, for the password recovery (A3.9, PUT …/account-email); independent of the contact email (D-76)" }
         emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
         stayStartDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
         stayEndDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
@@ -3240,6 +3343,7 @@ components:
           items: { $ref: "#/components/schemas/PaymentSummary" }
         status: { type: string, enum: [INACTIVE] }
         onboardingProgress: { $ref: "#/components/schemas/OnboardingProgress" }
+        deactivatedAt: { type: string, format: date-time, nullable: true, description: "When it was deactivated (A3.2 «inactivo desde …», TAR-237)" }
 
     GuestDocumentRef:
       type: object
@@ -3324,6 +3428,7 @@ components:
         contentType: { type: string, enum: [image/jpeg, image/png, application/pdf], description: "Type of the deleted or replaced file" }
         sizeBytes: { type: integer, minimum: 1, maximum: 5242880, description: "Size of the deleted or replaced file" }
         actorId: { type: string, format: uuid, description: "The administrator who performed the action" }
+        actorName: { type: string, description: "Name of that administrator (A3.8, TAR-237)" }
         performedAt: { type: string, format: date-time }
 
     PagedGuestDocumentActions:
@@ -3423,27 +3528,47 @@ components:
 
     Contract:
       type: object
-      required: [id, environmentId, guestId, monthlyAmount, paymentDay, graceDays, startDate, status, fileUrl]
+      required: [id, environmentId, guestId, guestName, documentType, documentNumber, environmentCode, environmentType, monthlyAmount, paymentDay, graceDays, startDate, status, expiringSoon, terminatedAt, file, fileUrl]
       properties:
         id: { type: string, format: uuid }
         environmentId: { type: string, format: uuid }
         guestId: { type: string, format: uuid }
+        guestName: { type: string, nullable: true, description: "null while the guest has not given a name (TAR-237)" }
+        documentType: { $ref: "#/components/schemas/DocumentType" }
+        documentNumber: { type: string }
+        environmentCode: { type: string, description: "«201»; with environmentType, «Habitación 201» (A4, A3.2, H2)" }
+        environmentType: { type: string, enum: [ROOM, CABIN] }
         monthlyAmount: { type: number }
         paymentDay: { type: integer }
         graceDays: { type: integer }
         startDate: { type: string, format: date }
         endDate: { type: string, format: date, nullable: true, description: "null means an open-ended contract (RN-07)" }
         status: { type: string, enum: [ACTIVE, EXPIRED, TERMINATED] }
-        fileUrl: { type: string, description: "R2 signed URL, expires in 15 min; signed when the contract is requested, never stored" }
+        expiringSoon: { type: boolean, description: "ACTIVE with 30 days or fewer to the end date (RF-09, D-27); false when open-ended (H2 «Próximo a vencer», TAR-237)" }
+        terminatedAt: { type: string, format: date, nullable: true, description: "When it was terminated (RN-21); null unless TERMINATED" }
+        file:
+          type: object
+          description: The PDF of the contract (A4.2, H2)
+          required: [name, sizeBytes, uploadedAt]
+          properties:
+            name: { type: string }
+            sizeBytes: { type: integer, minimum: 1 }
+            uploadedAt: { type: string, format: date-time }
+        fileUrl: { type: string, nullable: true, description: "R2 signed URL, expires in 15 min; signed when the contract is requested, never stored. null when the storage could not sign it: the rest of the contract still comes, and «Ver contrato» shows the storage notice (TAR-237)" }
 
     ContractSummary:
       type: object
       description: A contract in a list, without the signed file URL
-      required: [id, environmentId, guestId, monthlyAmount, paymentDay, graceDays, startDate, status, expiringSoon]
+      required: [id, environmentId, guestId, guestName, documentType, documentNumber, environmentCode, environmentType, monthlyAmount, paymentDay, graceDays, startDate, status, expiringSoon, terminatedAt]
       properties:
         id: { type: string, format: uuid }
         environmentId: { type: string, format: uuid }
         guestId: { type: string, format: uuid }
+        guestName: { type: string, nullable: true, description: "null while the guest has not given a name (TAR-237)" }
+        documentType: { $ref: "#/components/schemas/DocumentType" }
+        documentNumber: { type: string }
+        environmentCode: { type: string, description: "«201»; with environmentType, «Habitación 201» (A4, A3.2, H2)" }
+        environmentType: { type: string, enum: [ROOM, CABIN] }
         monthlyAmount: { type: number }
         paymentDay: { type: integer }
         graceDays: { type: integer }
@@ -3451,6 +3576,7 @@ components:
         endDate: { type: string, format: date, nullable: true, description: "null means an open-ended contract (RN-07)" }
         status: { type: string, enum: [ACTIVE, EXPIRED, TERMINATED] }
         expiringSoon: { type: boolean, description: "ACTIVE with 30 days or fewer to the end date (RF-09, D-27); false when open-ended" }
+        terminatedAt: { type: string, format: date, nullable: true, description: "When it was terminated (RN-21); null unless TERMINATED" }
 
     PagedContracts:
       type: object
