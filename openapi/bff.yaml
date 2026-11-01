@@ -38,13 +38,15 @@ tags:
   - name: admin-contracts
     description: Contract upload, validity and termination (RF-03, RF-09)
   - name: admin-payments
-    description: Payment review queue and direct payments (RF-05, RF-06)
+    description: Payment review queue, proofs, direct payments and payable periods (RF-05, RF-06, RN-22, TAR-239)
   - name: admin-fines
     description: Fines charged to guests, counted as income (RF-19, RN-30)
   - name: admin-expenses
     description: Operating expenses (RF-07)
   - name: admin-dashboard
     description: Home summary and monthly income/expense balance (RF-18)
+  - name: admin-refunds
+    description: Credit left over and refunds of Quipu to guests (RF-24, RN-38, RN-39)
   - name: guest-onboarding
     description: Mandatory, resumable onboarding of a new guest of either type (RF-14, RF-20)
   - name: guest
@@ -286,13 +288,27 @@ paths:
     get:
       operationId: listEnvironments
       tags: [admin-environments]
-      summary: List environments (RF-01)
+      summary: List environments (RF-01), with their occupancy (RN-20, TAR-237)
+      description: >
+        Each environment says who occupies it today (a contract in force or a stay of a temporary
+        guest), who comes next (a contract or a stay that starts later: A2 shows «Libre hasta …»)
+        and, when it is free, since when. With `freeFrom` and `freeTo` the list keeps only the
+        environments free for the whole range, to choose one for a stay (A3.5) or a contract (A4.1);
+        `freeTo` absent means open-ended (a contract without end date).
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       parameters:
         - name: status
           in: query
           schema: { type: string, enum: [ACTIVE, INACTIVE, ALL], default: ACTIVE }
+        - name: freeFrom
+          in: query
+          description: First day the environment must be free
+          schema: { type: string, format: date }
+        - name: freeTo
+          in: query
+          description: Last day the environment must be free; requires `freeFrom`
+          schema: { type: string, format: date }
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/After"
       responses:
@@ -319,7 +335,7 @@ paths:
               type: object
               required: [code, type]
               properties:
-                code: { type: string, minLength: 1, maxLength: 50, pattern: '\S', description: "Unique, e.g. \"201\". Surrounding spaces are ignored; at least one character is not a space" }
+                code: { type: string, minLength: 1, maxLength: 50, pattern: '^(?=.*\S)[A-Za-z0-9 ._/-]{1,50}$', description: "Unique, e.g. \"201\". Only letters, digits, space and . _ / - (decided 2026-10-31, TAR-237); surrounding spaces are ignored; at least one character is not a space" }
                 type: { type: string, enum: [ROOM, CABIN] }
       responses:
         "201":
@@ -367,7 +383,7 @@ paths:
               minProperties: 1
               additionalProperties: false
               properties:
-                code: { type: string, minLength: 1, maxLength: 50, pattern: '\S' }
+                code: { type: string, minLength: 1, maxLength: 50, pattern: '^(?=.*\S)[A-Za-z0-9 ._/-]{1,50}$', description: "Same rule as on creation" }
                 type: { type: string, enum: [ROOM, CABIN] }
       responses:
         "200":
@@ -412,7 +428,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: >
-            `ENVIRONMENT_OCCUPIED` (the environment has a contract in force, RN-12, RN-20) or
+            `ENVIRONMENT_OCCUPIED` (the environment has a contract in force or a stay, now or later, RN-12, RN-20) or
             `CONCURRENT_MODIFICATION` (see the `ConcurrentModification` response)
           content:
             application/json:
@@ -648,6 +664,10 @@ paths:
           in: query
           description: "CURRENT is every guest except the inactive ones (pending activation, onboarding and active)"
           schema: { type: string, enum: [CURRENT, PENDING_ACTIVATION, ONBOARDING, ACTIVE, INACTIVE, ALL], default: CURRENT }
+        - name: withoutContract
+          in: query
+          description: "true: only guests without a contract in force, to choose one when loading a contract (A4.1, TAR-237)"
+          schema: { type: boolean }
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/After"
       responses:
@@ -886,7 +906,9 @@ paths:
         "409":
           description: >
             `GUEST_NOT_ACTIVE` (the guest is not active, RN-35), `GUEST_NOT_TEMPORARY` (only temporary
-            guests have stays) or `STAY_OVERLAP` (the dates cross another stay of the guest)
+            guests have stays), `STAY_OVERLAP` (the dates cross another stay of the guest) or
+            `ENVIRONMENT_OCCUPIED` (the environment is taken in those dates by a contract or another
+            stay, or it is inactive; message «El ambiente ya está ocupado en esas fechas», TAR-237)
           content:
             application/json:
               schema:
@@ -894,12 +916,13 @@ paths:
                   - $ref: "#/components/schemas/GuestNotActiveError"
                   - $ref: "#/components/schemas/GuestNotTemporaryError"
                   - $ref: "#/components/schemas/StayOverlapError"
+                  - $ref: "#/components/schemas/EnvironmentOccupiedError"
 
   /admin/guests/{id}/stays/{stayId}:
     patch:
       operationId: updateGuestStay
       tags: [admin-guests]
-      summary: Correct the dates or the agreed amount of a stay (RN-17, CU-31)
+      summary: Correct the environment, the dates or the agreed amount of a stay (RN-17, CU-31, TAR-237)
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       parameters:
@@ -919,13 +942,15 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: >
-            `STAY_OVERLAP` (the new dates cross another stay of the guest) or `CONCURRENT_MODIFICATION`
+            `STAY_OVERLAP` (the new dates cross another stay of the guest), `ENVIRONMENT_OCCUPIED`
+            (the environment is taken in the new dates, TAR-237) or `CONCURRENT_MODIFICATION`
             (see the `ConcurrentModification` response)
           content:
             application/json:
               schema:
                 anyOf:
                   - $ref: "#/components/schemas/StayOverlapError"
+                  - $ref: "#/components/schemas/EnvironmentOccupiedError"
                   - $ref: "#/components/schemas/ConcurrentModificationError"
 
   /admin/guests/{id}/account-email:
@@ -1261,6 +1286,31 @@ paths:
         "429": { $ref: "#/components/responses/TooManyRequests" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /admin/guests/{id}/payable-periods:
+    get:
+      operationId: listPayablePeriods
+      tags: [admin-payments]
+      summary: What the guest can pay or has pending, for a direct payment (A5.1, CU-14, CU-28, RN-27, RN-38)
+      description: >-
+        For a guest with a contract, every period its contracts charge up to the current month
+        (RN-27) that is not paid; for a temporary guest, every stay without an approved payment.
+        Each one says its state, what is due after the credit applied (RN-38) and, when a payment
+        already exists (pending or rejected), its id: that one is completed in
+        `correctPaymentByAdmin`, not with a new direct payment. Works for active and inactive guests
+        (CU-28). Oldest first.
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+      responses:
+        "200":
+          description: Periods or stays that can receive a payment, or that have one pending or rejected
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/PayablePeriod" } } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   # ───────────────────────── ADMIN: CONTRACTS (RF-03, RF-09, CU-03, CU-07, CU-12) ─────────────────────────
   /admin/contracts:
     get:
@@ -1271,12 +1321,20 @@ paths:
         Newest first. The list carries no `fileUrl` (a signed URL per row would sign N files);
         ask `getContract` for the file of one contract. `status` is derived from the dates at
         the time of the request (America/Lima), so EXPIRED needs no job (RN-07).
+        With `expiringSoon=true` only the ACTIVE contracts with 30 days or fewer to their end
+        date come, ordered by end date, soonest first: A4 «Lo que toca ahora» (how many, whose
+        and when) and its «Por vencer» filter take them from here, so the notice is right
+        whatever page the list is on (D-27).
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       parameters:
         - name: status
           in: query
           schema: { type: string, enum: [ACTIVE, EXPIRED, TERMINATED] }
+        - name: expiringSoon
+          in: query
+          description: "true: only ACTIVE contracts with 30 days or fewer to the end date, soonest first (implies status=ACTIVE; with another status the answer is 400 `VALIDATION_ERROR`)"
+          schema: { type: boolean, default: false }
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/After"
       responses:
@@ -1330,7 +1388,9 @@ paths:
             guest of type CONTRACT takes a contract, the temporary one has stays, RN-13),
             `GUEST_HAS_PENDING_DEBT` (the guest owes periods, RN-25), `ENVIRONMENT_INACTIVE` (the
             environment is inactive and takes no new contract, RF-01) or `ENVIRONMENT_OCCUPIED`
-            (the environment already has a contract in force, RN-20). The check order is: guest
+            (the dates cross another contract not terminated or a stay of the environment, RN-20; a
+            renewal that starts after the end of the contract in force is accepted, decided
+            2026-10-31). The check order is: guest
             state, guest type, debt, environment state, environment occupancy
           content:
             application/json:
@@ -1354,7 +1414,7 @@ paths:
       parameters: [{ $ref: "#/components/parameters/Id" }]
       responses:
         "200":
-          description: "Contract detail (never cacheable: it carries a freshly signed file URL)"
+          description: "Contract detail (never cacheable: it carries a freshly signed file URL, null if the storage could not sign it)"
           headers:
             Cache-Control: { required: true, schema: { type: string, enum: ["no-store"] } }
           content: { application/json: { schema: { $ref: "#/components/schemas/Contract" } } }
@@ -1362,7 +1422,6 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "503": { $ref: "#/components/responses/FileStorageUnavailable" }
 
   /admin/contracts/{id}/terminate:
     post:
@@ -1391,7 +1450,13 @@ paths:
         RN-10) and per temporary guest whose stay covers today: `PAID` counts as up to
         date, `UNDER_REVIEW` as under review, `UNPAID` not yet overdue as pending and
         `OVERDUE` as overdue (RN-06). The vouchers awaiting review come oldest first,
-        at most 20; `pendingVouchersTotal` gives how many there are.
+        at most 20, as rows of the review queue (A5): who the guest is and its
+        environment, without the amount; `pendingVouchersTotal` gives how many there are.
+        `charges` are the rows of «Cobros del mes» (one per active contract and per stay in
+        force today) and the other blocks feed «Lo que toca ahora» and «También pendiente»
+        (A1, decided 2026-11-01): overdue charges, payments rejected and not yet corrected,
+        refunds to register (RN-38, RN-39), contracts expiring in 30 days or less (RN-07) and
+        guests that have not activated their account (RN-32).
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       responses:
@@ -1401,7 +1466,7 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [paymentsUpToDate, paymentsUnderReview, paymentsPending, paymentsOverdue, pendingVouchers, pendingVouchersTotal]
+                required: [paymentsUpToDate, paymentsUnderReview, paymentsPending, paymentsOverdue, pendingVouchers, pendingVouchersTotal, charges, overdue, rejected, refunds, expiringContracts, guestsNotActivated]
                 properties:
                   paymentsUpToDate: { type: integer, minimum: 0, description: "PAID" }
                   paymentsUnderReview: { type: integer, minimum: 0, description: "UNDER_REVIEW" }
@@ -1410,8 +1475,17 @@ paths:
                   pendingVouchers:
                     type: array
                     maxItems: 20
-                    items: { $ref: "#/components/schemas/PaymentSummary" }
+                    items: { $ref: "#/components/schemas/PaymentQueueItem" }
                   pendingVouchersTotal: { type: integer, minimum: 0 }
+                  charges:
+                    type: array
+                    description: One per active contract (its period of the current month) and per stay in force today; not paginated (a few dozen at most)
+                    items: { $ref: "#/components/schemas/DashboardCharge" }
+                  overdue: { $ref: "#/components/schemas/DashboardOverdue" }
+                  rejected: { $ref: "#/components/schemas/DashboardRejected" }
+                  refunds: { $ref: "#/components/schemas/DashboardRefunds" }
+                  expiringContracts: { $ref: "#/components/schemas/DashboardExpiringContracts" }
+                  guestsNotActivated: { $ref: "#/components/schemas/DashboardGuestsNotActivated" }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
@@ -1422,9 +1496,10 @@ paths:
       tags: [admin-dashboard]
       summary: Income vs. expenses balance for a month (RF-18, CU-08)
       description: >-
-        Income is the sum of the approved payments attributed to the month plus the fines of the
-        month (RF-19); expenses are the expenses of the month (RF-07); `net` is income minus
-        expenses. A contract payment belongs to its period; a stay payment belongs to the month
+        Income is the sum of the approved payments attributed to the month, by their verified
+        amounts (RN-16), plus the fines of the month (RF-19), minus the refunds dated in the month
+        (RN-39, TAR-240); expenses are the expenses of the month (RF-07); `net` is income minus
+        expenses. Each part carries how many movements it adds up, for the A6 breakdown. A contract payment belongs to its period; a stay payment belongs to the month
         the stay starts (D-68). Pending, rejected or cancelled payments do not
         count. Guests and environments count whether active or inactive. A month without
         movements answers zeros. Amounts in soles with two decimals.
@@ -1443,13 +1518,18 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [month, totalIncome, incomeFromPayments, incomeFromFines, totalExpenses, net]
+                required: [month, totalIncome, incomeFromPayments, paymentsCount, incomeFromFines, finesCount, refundsTotal, refundsCount, totalExpenses, expensesCount, net]
                 properties:
                   month: { type: string, pattern: "^(?!0000)\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09" }
-                  totalIncome: { type: number, multipleOf: 0.01, description: "incomeFromPayments + incomeFromFines" }
-                  incomeFromPayments: { type: number, multipleOf: 0.01, description: "Approved contract and stay payments attributed to the month" }
+                  totalIncome: { type: number, multipleOf: 0.01, description: "incomeFromPayments + incomeFromFines - refundsTotal (RN-11, RN-39)" }
+                  incomeFromPayments: { type: number, multipleOf: 0.01, description: "Approved contract and stay payments attributed to the month, by their verified amounts" }
+                  paymentsCount: { type: integer, minimum: 0 }
                   incomeFromFines: { type: number, multipleOf: 0.01, description: "Fines of the month" }
+                  finesCount: { type: integer, minimum: 0 }
+                  refundsTotal: { type: number, multipleOf: 0.01, minimum: 0, description: "Refunds dated in the month (RN-39)" }
+                  refundsCount: { type: integer, minimum: 0 }
                   totalExpenses: { type: number, multipleOf: 0.01 }
+                  expensesCount: { type: integer, minimum: 0 }
                   net: { type: number, multipleOf: 0.01, description: "totalIncome - totalExpenses; negative when expenses are higher" }
         "400":
           description: "`VALIDATION_ERROR` with `field: month` when it is missing, not a YYYY-MM month or its year is 0000"
@@ -1464,9 +1544,12 @@ paths:
       tags: [admin-payments]
       summary: Payment review queue (RF-05, CU-05) — oldest first, so the review is first in, first out
       description: >
-        Each row carries the guest, the environment (or the temporary mark), the period and the
-        upload date, and no amount: the administrator compares the declared amount with the
-        voucher in `getPayment` before resolving (RN-16, A5).
+        Each row carries the guest, the environment (or the temporary mark), the period or the
+        stay dates, the last submission date and a summary of the proofs (how many vouchers,
+        whether there is cash), and no amount: the administrator compares the declared amounts with
+        the proofs in `getPayment` before resolving (RN-16, A5). The queue is ordered by
+        `submittedAt`, the last time the payment was sent: a rejected payment that the guest
+        corrects and sends again enters the queue with its new date (TAR-239).
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       parameters:
@@ -1487,57 +1570,48 @@ paths:
       operationId: createDirectPayment
       tags: [admin-payments]
       summary: >
-        Register a direct payment (cash/manual) — admin uploads the
-        voucher on the guest's behalf, auto-approved (RN-22, RN-23, CU-14).
-        A voucher is always required, no exceptions (RN-22).
+        Register a direct payment received by the administration (RN-23, CU-14, A5.1) — one or
+        more proofs, vouchers or cash without a voucher (RN-22), approved at once with the amounts
+        given as verified
       description: >
-        Rate limited per session user, checked before the file is read: over the limit the answer is 429 `RATE_LIMITED` with a `Retry-After` header.
+        Only for a period or a stay that has no payment yet (TAR-239): one that is pending or
+        rejected is completed in `correctPaymentByAdmin` (A5.2). The proofs must cover what is due
+        (the monthly amount or the agreed amount, minus the credit applied, RN-38); a short payment
+        is not registered (400 `VALIDATION_ERROR` with `field: proofs`). What is left over becomes
+        credit for the next period, or a refund to register in Finanzas when it is the last period of
+        a contract or a stay (RN-38, RN-39). Every proof is recorded as added by the administration.
+        A guest that is not active can only pay periods it owes (CU-28, RN-27, RN-35).
+        Rate limited per session user, checked before the files are read: over the limit the answer
+        is 429 `RATE_LIMITED` with a `Retry-After` header.
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       requestBody:
         required: true
         content:
           multipart/form-data:
-            schema:
-              type: object
-              required: [file, guestId, amount]
-              description: >
-                Send exactly one of `period` (a guest with a contract) or `stayId` (a temporary
-                guest, whose single payment belongs to a stay, RN-03).
-              oneOf:
-                - type: object
-                  required: [period]
-                  properties:
-                    period: { type: string }
-                - type: object
-                  required: [stayId]
-                  properties:
-                    stayId: { type: string }
-              properties:
-                file: { type: string, format: binary, description: "JPG/PNG/PDF, ≤5MB, checked by content (RF-15)" }
-                guestId: { type: string, format: uuid }
-                period: { type: string, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09" }
-                stayId: { type: string, format: uuid }
-                amount: { type: number, exclusiveMinimum: true, minimum: 0, maximum: 99999999.99, multipleOf: 0.01, description: "In soles, greater than 0, at most two decimals" }
-                paymentMethod: { type: string, maxLength: 50, description: "Optional free text, e.g. Yape/transfer/cash (RN-28)" }
+            schema: { $ref: "#/components/schemas/DirectPaymentUpload" }
+            encoding:
+              proofs: { contentType: application/json }
       responses:
         "201":
-          description: "Payment registered, status APPROVED immediately (RN-23)"
+          description: "Payment registered, status APPROVED immediately (RN-23), with each proof verified at its amount"
           content: { application/json: { schema: { $ref: "#/components/schemas/PaymentSummary" } } }
         "400":
           description: >
-            `VOUCHER_INVALID_FILE` (not JPG, PNG or PDF by content, or over 5 MB, RF-15) or
-            `VALIDATION_ERROR` (any other field, with its `field`: amount, period, stayId, or both
-            or neither of period and stayId)
+            `VOUCHER_INVALID_FILE` (a file is not JPG, PNG or PDF by content, or is over 5 MB, RF-15;
+            `field` names it, e.g. `proofs[1].file`) or `VALIDATION_ERROR` (any other field, with its
+            `field`: amount, period, stayId, receivedOn, `proofs` when there are none, more than 5, or
+            they do not cover what is due, `proofs[i].amount`, or both or neither of period and stayId)
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "401": { $ref: "#/components/responses/NoSession" }
-        "403": { $ref: "#/components/responses/Forbidden" }
+        "403": { $ref: "#/components/responses/OriginCheckForbidden" }
         "404": { description: "The guest (`GUEST_NOT_FOUND`) or the stay (`STAY_NOT_FOUND`) does not exist", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "409":
           description: >
-            `GUEST_NOT_ACTIVE` (RN-35), `PAYMENT_ALREADY_EXISTS_FOR_PERIOD` (an approved payment
-            already exists for the period or the stay, RN-02) or `VOUCHER_ALREADY_EXISTS` (a voucher
-            is still pending for it: resolve it first)
+            `GUEST_NOT_ACTIVE` (RN-35; a guest that is not active and does not owe that period),
+            `PAYMENT_ALREADY_EXISTS_FOR_PERIOD` (an approved payment already exists for the period or
+            the stay, RN-02) or `VOUCHER_ALREADY_EXISTS` (a payment is pending or rejected for it:
+            complete it in `correctPaymentByAdmin`)
           content:
             application/json:
               schema:
@@ -1552,14 +1626,19 @@ paths:
     get:
       operationId: getPayment
       tags: [admin-payments]
-      summary: Payment detail with the voucher to review (A5.2, RN-16)
-      description: The voucher URL is signed when this is requested, expires in 15 minutes and forces the download
+      summary: Payment detail with its proofs to review (A5.2, RN-16, RN-22)
+      description: >
+        Carries what is being paid (guest, environment, period or stay dates, the amount due after
+        the credit applied, and whether it is the last period, which decides between credit and
+        refund for what is left over, RN-38) and every proof with its declared and verified amounts
+        and who added it. Each voucher's URL is signed when this is requested, expires in 15 minutes
+        and forces the download; a cash proof has no file.
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       parameters: [{ $ref: "#/components/parameters/Id" }]
       responses:
         "200":
-          description: "Payment detail (never cacheable: it carries a freshly signed voucher URL)"
+          description: "Payment detail (never cacheable: it carries freshly signed voucher URLs)"
           headers:
             Cache-Control: { required: true, schema: { type: string, enum: ["no-store"] } }
           content: { application/json: { schema: { $ref: "#/components/schemas/Payment" } } }
@@ -1571,11 +1650,16 @@ paths:
     patch:
       operationId: resolvePayment
       tags: [admin-payments]
-      summary: Approve or reject a payment (RF-05, CU-05)
+      summary: Approve or reject a pending or rejected payment, with the verified amount of each proof (RF-05, CU-05, RN-16)
       description: >
-        A pending payment is resolved once. Rejecting does not close the period: the guest can
-        upload a new voucher. A short payment is rejected with a reason and the guest uploads a
-        voucher for the full amount (RN-16).
+        Resolves a PENDING payment, or a REJECTED one that the administrator corrected
+        (`correctPaymentByAdmin`) and decides on at once, without sending it back to the queue
+        (decided 2026-10-31, TAR-239). To approve, send the verified amount of every proof: what is
+        approved is their sum, which must cover what is due (the monthly amount or the agreed amount
+        minus the credit applied); a short payment is rejected with a reason (RN-16). What is left
+        over becomes credit or a refund to register (RN-38, RN-39). Rejecting keeps the proofs: the
+        guest or the administrator adds or corrects them and the payment is sent again (RN-05).
+        The reviewer is recorded and shown in the administrator's views (TAR-230).
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       parameters: [{ $ref: "#/components/parameters/Id" }]
@@ -1590,12 +1674,27 @@ paths:
               properties:
                 status: { type: string, enum: [APPROVED, REJECTED] }
                 reason: { type: string, maxLength: 500, description: "Required when status=REJECTED, not blank (RN-05); shown to the guest in the app only" }
+                proofs:
+                  type: array
+                  minItems: 1
+                  maxItems: 5
+                  description: "Required when status=APPROVED: one entry per proof of the payment, with what the administrator verified (RN-16)"
+                  items:
+                    type: object
+                    required: [id, verifiedAmount]
+                    additionalProperties: false
+                    properties:
+                      id: { type: string, format: uuid }
+                      verifiedAmount: { type: number, minimum: 0, maximum: 99999999.99, multipleOf: 0.01, description: "In soles; 0 when the proof turned out to be worthless" }
       responses:
         "200":
-          description: Payment resolved (without the voucher URL; ask `getPayment` for it)
+          description: Payment resolved (without the voucher URLs; ask `getPayment` for them)
           content: { application/json: { schema: { $ref: "#/components/schemas/PaymentSummary" } } }
         "400":
-          description: "`PAYMENT_REASON_REQUIRED` (empty reason on rejection, RN-05) or `VALIDATION_ERROR`"
+          description: >
+            `PAYMENT_REASON_REQUIRED` (empty reason on rejection, RN-05) or `VALIDATION_ERROR`
+            (`field: proofs` when approving without the verified amount of every proof of the
+            payment, or when their sum does not cover what is due)
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -1603,11 +1702,11 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: >
-            `PAYMENT_ALREADY_RESOLVED` (the payment is no longer pending: another process resolved
+            `PAYMENT_ALREADY_RESOLVED` (the payment is already approved: another process resolved
             it first), `PAYMENT_ALREADY_EXISTS_FOR_PERIOD` (approving it would leave two approved
             payments for the same period or stay) or `PAYMENT_PERIOD_NOT_PAYABLE` (approving a
             payment whose period the contract no longer charges, because it was terminated or expired
-            first; the payment stays pending and can only be rejected with a reason)
+            first; the payment can only be rejected with a reason)
           content:
             application/json:
               schema:
@@ -1615,6 +1714,53 @@ paths:
                   - $ref: "#/components/schemas/PaymentAlreadyResolvedError"
                   - $ref: "#/components/schemas/PaymentAlreadyExistsForPeriodError"
                   - $ref: "#/components/schemas/PaymentPeriodNotPayableError"
+
+  /admin/payments/{id}/proofs:
+    put:
+      operationId: correctPaymentByAdmin
+      tags: [admin-payments]
+      summary: Add or correct the proofs of a pending or rejected payment (A5.2, RN-05, RN-15, RN-22)
+      description: >
+        Replaces the payment's set of proofs: every proof listed with its `id` is kept (its amount
+        or method can change, and a new file replaces its voucher), every proof without `id` is
+        added by the administration (a voucher of reference or cash), and every existing proof not
+        listed is removed. The status does not change: a rejected payment stays REJECTED until
+        `resolvePayment` approves or rejects it again (decided 2026-10-31, TAR-239). An approved
+        payment cannot be corrected. Rate limited per session user, checked before the files are
+        read: over the limit the answer is 429 `RATE_LIMITED` with a `Retry-After` header.
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: "#/components/schemas/ProofsCorrection" }
+            encoding:
+              proofs: { contentType: application/json }
+      responses:
+        "200":
+          description: Proofs saved; the payment without the voucher URLs (ask `getPayment` for them)
+          content: { application/json: { schema: { $ref: "#/components/schemas/PaymentSummary" } } }
+        "400":
+          description: >
+            `VOUCHER_INVALID_FILE` (with the `field` of the file, RF-15) or `VALIDATION_ERROR`
+            (`field: proofs` when there are none or more than 5, or `proofs[i].…`; an `id` that is
+            not a proof of this payment is `proofs[i].id`)
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/OriginCheckForbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: "`PAYMENT_NOT_CORRECTABLE` (the payment is already approved) or `CONCURRENT_MODIFICATION` (the payment changed meanwhile, for example the guest sent it again)"
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/PaymentNotCorrectableError"
+                  - $ref: "#/components/schemas/ConcurrentModificationError"
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/FileStorageUnavailable" }
 
   # ───────────────────────── ADMIN: EXPENSES (RF-07, CU-08) ─────────────────────────
   /admin/expenses:
@@ -1773,6 +1919,92 @@ paths:
         "429": { $ref: "#/components/responses/TooManyRequests" }
         "404": { description: "The fine does not exist (`RESOURCE_NOT_FOUND`)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
+  # ───────────────────────── ADMIN: REFUNDS AND CREDITS (RF-24, RN-38, RN-39, TAR-240) ─────────────────────────
+  /admin/refunds:
+    get:
+      operationId: listRefunds
+      tags: [admin-refunds]
+      summary: Refunds of a month (RF-24, A6 «Devoluciones»)
+      description: >
+        The refunds Quipu made to guests whose date falls in the month: each one counts in the
+        month of its date and is subtracted from that month's income (RN-39, RF-18). Newest first.
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters:
+        - name: month
+          in: query
+          required: true
+          schema: { type: string, pattern: "^(?!0000)\\d{4}-(0[1-9]|1[0-2])$", example: "2026-10" }
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/After"
+      responses:
+        "200":
+          description: One page of the refunds of the month
+          content: { application/json: { schema: { $ref: "#/components/schemas/PagedRefunds" } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+    post:
+      operationId: createRefund
+      tags: [admin-refunds]
+      summary: Register a refund of Quipu to a guest (RF-24, RN-39, A6.5)
+      description: >
+        Returns part or all of a guest's pending credit (RN-38): a partial refund is allowed and
+        the rest stays pending. The amount cannot exceed the pending credit, also when two refunds
+        are registered at the same time (the second one answers 400 with `field: amount`). In the
+        MVP a refund is not edited nor deleted (decided 2026-10-29). Who and when are recorded; no
+        personal data goes to the logs.
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefundInput" }
+      responses:
+        "201":
+          description: Refund registered; the month of its date is recalculated
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+          content: { application/json: { schema: { $ref: "#/components/schemas/Refund" } } }
+        "400":
+          description: >
+            `VALIDATION_ERROR` with its `field`: `guestId`; `amount` (missing, not greater than 0,
+            more than two decimals, or more than the pending credit of the guest); `date` (missing or
+            in the future); `method` (missing, blank or over 50); `note` (over 500)
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: "The guest does not exist (`RESOURCE_NOT_FOUND`)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /admin/credits:
+    get:
+      operationId: listPendingCredits
+      tags: [admin-refunds]
+      summary: Guests with credit to refund (RN-38, A6 and A1 notices)
+      description: >
+        Credit that has no period left to be used in: the contract ended or is in its last period,
+        or it came from a stay of a temporary guest. Oldest first, so A6.5 offers the oldest one.
+        Not paginated: there are few at a time.
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      parameters:
+        - name: pending
+          in: query
+          required: true
+          description: Only credit still to refund; `true` is the only value supported for now
+          schema: { type: boolean, enum: [true] }
+      responses:
+        "200":
+          description: Pending credits, one per guest
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/PendingCredit" } } } }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
   # ───────────────────────── CONTRACT GUEST (RF-04, RF-06, RF-10, CU-16..20) ─────────────────────────
   /guest/account-status:
     get:
@@ -1788,33 +2020,69 @@ paths:
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/GuestAccessDenied" }
 
+  /guest/credit:
+    get:
+      operationId: getOwnCredit
+      tags: [guest]
+      summary: Own credit — what is left over to use or to be refunded (RN-38, RN-39, H1)
+      description: >
+        The credit the guest has now and whether Quipu will refund it (no period left where to
+        use it: the contract ended or this is its last period), plus the last refund made. The
+        guest cannot ask for a refund while a period remains where to use the credit (decided
+        2026-11-01). H1 reads it instead of the payment history.
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType CONTRACT
+      responses:
+        "200":
+          description: Own credit
+          content: { application/json: { schema: { $ref: "#/components/schemas/GuestCredit" } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/GuestAccessDenied" }
+
   /guest/contract:
     get:
       operationId: getOwnContract
       tags: [guest]
       summary: >
-        Own contract, regardless of status — shown read-only even when
+        Own contracts, regardless of status — shown read-only even when
         EXPIRED or TERMINATED (CU-18, RN-26). A guest never loses visibility
         of their own contract; only the ability to act on it changes with
         status (e.g. voucher upload requires ACTIVE, see /guest/payments).
+      description: >
+        `current` is the contract in force today, or the one that starts first if none is running
+        yet (RN-07), or the latest one if all ended. `next` is a renewal already loaded that starts
+        after `current` ends (RN-20); H2 shows it below as «Tu próximo contrato» (decided
+        2026-10-31, TAR-237).
       security: [{ cookieAuth: [] }]
       x-roles: [GUEST] # guestType CONTRACT
       responses:
         "200":
-          description: "Own contract, whatever its status (never cacheable: it carries a freshly signed file URL)"
+          description: "Own contracts (never cacheable: they carry freshly signed file URLs)"
           headers:
             Cache-Control: { required: true, schema: { type: string, enum: ["no-store"] } }
-          content: { application/json: { schema: { $ref: "#/components/schemas/Contract" } } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [current, next]
+                properties:
+                  current: { $ref: "#/components/schemas/Contract" }
+                  next: { type: object, allOf: [{ $ref: "#/components/schemas/Contract" }], nullable: true }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/GuestAccessDenied" }
         "404": { description: "No contract was ever associated with this guest" }
-        "503": { $ref: "#/components/responses/FileStorageUnavailable" }
 
   /guest/payments:
     get:
       operationId: listOwnPayments
       tags: [guest]
-      summary: Own payment history (RF-10, CU-19) — own record only (RN-09), newest first, without the voucher URL
+      summary: Own payment history (RF-10, CU-19, H4) — own record only (RN-09), newest first, without voucher URLs
+      description: >
+        Each payment with its proofs (kind, method, declared and verified amount, who added it),
+        what happened to it (sent, rejected with its reason, approved), what was left over and the
+        credit it used (RN-38); the refunds Quipu made to the guest come as items of their own, by
+        date (RN-39, label Devuelto). `creditBalance` is the credit the guest has right now. Who
+        reviewed a payment is not shown to the guest (TAR-230).
       security: [{ cookieAuth: [] }]
       x-roles: [GUEST] # guestType CONTRACT
       parameters:
@@ -1823,38 +2091,37 @@ paths:
       responses:
         "200":
           description: Own payment history page
-          content: { application/json: { schema: { $ref: "#/components/schemas/PagedPayments" } } }
+          content: { application/json: { schema: { $ref: "#/components/schemas/PagedGuestHistory" } } }
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/GuestAccessDenied" }
     post:
       operationId: uploadPaymentVoucher
       tags: [guest]
-      summary: Upload monthly payment voucher (RF-04, CU-17)
+      summary: Send the payment of a month with one or more proofs (RF-04, CU-17, H3, RN-22)
       description: >
-        Rate limited per session user, checked before the file is read: over the limit the answer is 429 `RATE_LIMITED` with a `Retry-After` header.
+        A payment gathers from 1 to 5 proofs: vouchers (a file each) and cash without a voucher
+        (RN-22). It is created PENDING. Rate limited per session user, checked before the files are
+        read: over the limit the answer is 429 `RATE_LIMITED` with a `Retry-After` header.
       security: [{ cookieAuth: [] }]
       x-roles: [GUEST] # guestType CONTRACT
       requestBody:
         required: true
         content:
           multipart/form-data:
-            schema:
-              type: object
-              required: [file, period, amount]
-              properties:
-                file: { type: string, format: binary, description: "JPG/PNG/PDF, ≤5MB, checked by content (RF-15)" }
-                period: { type: string, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09", description: "A month of the contract, up to the current month" }
-                amount: { type: number, exclusiveMinimum: true, minimum: 0, maximum: 99999999.99, multipleOf: 0.01, description: "Declared amount, in soles; the administrator compares it with the voucher (RN-16)" }
-                paymentMethod: { type: string, maxLength: 50, description: "Optional free text, e.g. Yape/transfer/cash (RN-28)" }
+            schema: { $ref: "#/components/schemas/GuestPaymentUpload" }
+            encoding:
+              proofs: { contentType: application/json }
       responses:
         "201":
-          description: Voucher uploaded, payment set to PENDING
+          description: Payment sent, status PENDING
           content: { application/json: { schema: { $ref: "#/components/schemas/PaymentSummary" } } }
         "400":
           description: >
-            `VOUCHER_INVALID_FILE` (not JPG, PNG or PDF by content, or over 5 MB, RF-15) or
-            `VALIDATION_ERROR` (any other field, with its `field`: amount, period)
+            `VOUCHER_INVALID_FILE` (a file is not JPG, PNG or PDF by content, or is over 5 MB, RF-15;
+            `field` names it, e.g. `proofs[1].file`) or `VALIDATION_ERROR` (any other field, with its
+            `field`: period, `proofs` when there are none or more than 5, `proofs[i].amount`,
+            `proofs[i].fileIndex`)
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "401": { $ref: "#/components/responses/NoSession" }
         "403":
@@ -1874,8 +2141,8 @@ paths:
         "409":
           description: >
             `GUEST_NOT_ACTIVE` (RN-35), `PAYMENT_ALREADY_EXISTS_FOR_PERIOD` (the period is already
-            approved, RN-02, D-28) or `VOUCHER_ALREADY_EXISTS` (a voucher is pending for this period,
-            RN-15)
+            approved, RN-02, D-28) or `VOUCHER_ALREADY_EXISTS` (a payment is pending for this period,
+            RN-15, or rejected: correct it with `correctOwnPayment`)
           content:
             application/json:
               schema:
@@ -1883,6 +2150,62 @@ paths:
                   - $ref: "#/components/schemas/GuestNotActiveError"
                   - $ref: "#/components/schemas/PaymentAlreadyExistsForPeriodError"
                   - $ref: "#/components/schemas/VoucherAlreadyExistsError"
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/FileStorageUnavailable" }
+
+  /guest/payments/{id}:
+    get:
+      operationId: getOwnPayment
+      tags: [guest]
+      summary: One own payment with its proofs (H3 read-only «Tu pago» and correction, RN-15) — without voucher URLs
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType CONTRACT
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200":
+          description: The payment, with its proofs and reviews
+          content: { application/json: { schema: { $ref: "#/components/schemas/GuestPayment" } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/GuestAccessDenied" }
+        "404": { description: "No payment with that id belongs to this guest (`RESOURCE_NOT_FOUND`, RN-09)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    put:
+      operationId: correctOwnPayment
+      tags: [guest]
+      summary: Correct a rejected payment and send it again (H3 «Enviar de nuevo», RN-05)
+      description: >
+        Replaces the payment's set of proofs as `correctPaymentByAdmin` does (listed with `id`:
+        kept, with its amount, method or file changed; without `id`: added; not listed: removed)
+        and sends it again: the payment goes back to PENDING with a new `submittedAt`. Only a
+        REJECTED payment can be corrected; a pending one is read-only (RN-15). Rate limited per
+        session user, checked before the files are read.
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType CONTRACT
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: "#/components/schemas/ProofsCorrection" }
+            encoding:
+              proofs: { contentType: application/json }
+      responses:
+        "200":
+          description: Payment sent again, status PENDING
+          content: { application/json: { schema: { $ref: "#/components/schemas/PaymentSummary" } } }
+        "400":
+          description: "`VOUCHER_INVALID_FILE` (with the `field` of the file, RF-15) or `VALIDATION_ERROR` (`proofs` or `proofs[i].…`)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/GuestAccessDenied" }
+        "404": { description: "No payment with that id belongs to this guest (`RESOURCE_NOT_FOUND`, RN-09)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409":
+          description: "`PAYMENT_NOT_CORRECTABLE` (the payment is pending or approved, not rejected) or `GUEST_NOT_ACTIVE` (RN-35)"
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/PaymentNotCorrectableError"
+                  - $ref: "#/components/schemas/GuestNotActiveError"
         "429": { $ref: "#/components/responses/TooManyRequests" }
         "503": { $ref: "#/components/responses/FileStorageUnavailable" }
 
@@ -2072,35 +2395,31 @@ paths:
       operationId: uploadTemporaryVoucher
       tags: [temporary-guest]
       summary: >
-        Upload the one-time payment voucher (RF-04, CU-22) — a stay allows
-        exactly one voucher, pending or approved (RN-03: single non-recurring
-        payment per stay). The guest keeps its record across visits and each visit is
-        a stay (RN-13, RN-18, `POST /admin/guests/{id}/stays`). The guest does not choose
-        the stay: the voucher belongs to the stay in force today, otherwise to the next one
-        that has no pending or approved payment.
+        Send the single payment of a stay with one or more proofs (RF-04, CU-22, T2) — a stay has
+        one payment (RN-03), which gathers from 1 to 5 proofs, vouchers or cash (RN-22). The guest
+        keeps its record across visits and each visit is a stay (RN-13, RN-18,
+        `POST /admin/guests/{id}/stays`). The guest does not choose the stay: the payment belongs
+        to the stay in force today, otherwise to the next one that has no payment.
       description: >
-        Rate limited per session user, checked before the file is read: over the limit the answer is 429 `RATE_LIMITED` with a `Retry-After` header.
+        Rate limited per session user, checked before the files are read: over the limit the answer is 429 `RATE_LIMITED` with a `Retry-After` header.
       security: [{ cookieAuth: [] }]
       x-roles: [GUEST] # guestType TEMPORARY
       requestBody:
         required: true
         content:
           multipart/form-data:
-            schema:
-              type: object
-              required: [file, amount]
-              properties:
-                file: { type: string, format: binary, description: "JPG/PNG/PDF, ≤5MB, checked by content (RF-15)" }
-                amount: { type: number, exclusiveMinimum: true, minimum: 0, maximum: 99999999.99, multipleOf: 0.01, description: "Declared amount, in soles; the administrator compares it with the voucher (RN-16)" }
-                paymentMethod: { type: string, maxLength: 50, description: "Optional free text, e.g. Yape/transfer/cash (RN-28)" }
+            schema: { $ref: "#/components/schemas/StayPaymentUpload" }
+            encoding:
+              proofs: { contentType: application/json }
       responses:
         "201":
-          description: Voucher uploaded, payment set to PENDING
+          description: Payment sent, status PENDING
           content: { application/json: { schema: { $ref: "#/components/schemas/PaymentSummary" } } }
         "400":
           description: >
-            `VOUCHER_INVALID_FILE` (not JPG, PNG or PDF by content, or over 5 MB, RF-15) or
-            `VALIDATION_ERROR` (any other field, with its `field`: amount)
+            `VOUCHER_INVALID_FILE` (a file is not JPG, PNG or PDF by content, or is over 5 MB, RF-15;
+            `field` names it) or `VALIDATION_ERROR` (`proofs` when there are none or more than 5,
+            `proofs[i].amount`, `proofs[i].fileIndex`)
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "401": { $ref: "#/components/responses/NoSession" }
         "403":
@@ -2120,7 +2439,8 @@ paths:
         "409":
           description: >
             `GUEST_NOT_ACTIVE` (RN-35), `PAYMENT_ALREADY_EXISTS_FOR_PERIOD` (the stay is already paid,
-            RN-03) or `VOUCHER_ALREADY_EXISTS` (a voucher is pending for the stay, RN-03, RN-15)
+            RN-03) or `VOUCHER_ALREADY_EXISTS` (a payment is pending for the stay, RN-03, RN-15, or
+            rejected: correct it with `correctOwnPaymentTemporary`)
           content:
             application/json:
               schema:
@@ -2128,6 +2448,58 @@ paths:
                   - $ref: "#/components/schemas/GuestNotActiveError"
                   - $ref: "#/components/schemas/PaymentAlreadyExistsForPeriodError"
                   - $ref: "#/components/schemas/VoucherAlreadyExistsError"
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/FileStorageUnavailable" }
+
+  /temporary-guest/payments/{id}:
+    get:
+      operationId: getOwnPaymentTemporary
+      tags: [temporary-guest]
+      summary: The payment of a stay with its proofs (T2 read-only «Tu pago» and correction, RN-15) — without voucher URLs
+      description: The id comes from `paymentId` in `getTemporaryGuestPaymentStatus`; the temporary guest has no history (H4) yet.
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType TEMPORARY
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200":
+          description: The payment, with its proofs and reviews
+          content: { application/json: { schema: { $ref: "#/components/schemas/GuestPayment" } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/GuestAccessDenied" }
+        "404": { description: "No payment with that id belongs to this guest (`RESOURCE_NOT_FOUND`, RN-09)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    put:
+      operationId: correctOwnPaymentTemporary
+      tags: [temporary-guest]
+      summary: Correct the rejected payment of a stay and send it again (T2 «Enviar de nuevo», RN-05)
+      description: Same rules as `correctOwnPayment`.
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType TEMPORARY
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: "#/components/schemas/ProofsCorrection" }
+            encoding:
+              proofs: { contentType: application/json }
+      responses:
+        "200":
+          description: Payment sent again, status PENDING
+          content: { application/json: { schema: { $ref: "#/components/schemas/PaymentSummary" } } }
+        "400":
+          description: "`VOUCHER_INVALID_FILE` (with the `field` of the file, RF-15) or `VALIDATION_ERROR` (`proofs` or `proofs[i].…`)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/GuestAccessDenied" }
+        "404": { description: "No payment with that id belongs to this guest (`RESOURCE_NOT_FOUND`, RN-09)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409":
+          description: "`PAYMENT_NOT_CORRECTABLE` (the payment is pending or approved, not rejected) or `GUEST_NOT_ACTIVE` (RN-35)"
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/PaymentNotCorrectableError"
+                  - $ref: "#/components/schemas/GuestNotActiveError"
         "429": { $ref: "#/components/responses/TooManyRequests" }
         "503": { $ref: "#/components/responses/FileStorageUnavailable" }
 
@@ -2300,10 +2672,11 @@ components:
       description: >
         `AUTH_FORBIDDEN`: the session is not an administrator (RN-08), or the request
         carries neither an `Origin` header nor `Sec-Fetch-Site: same-origin`, or they
-        name another site (ADR-006). `replaceGuestDocument` is the sixth route of the
+        name another site (ADR-006). `replaceGuestDocument` is one route of the
         exact set of multipart routes under that check: `createContract`,
         `createDirectPayment`, `uploadPaymentVoucher`, `uploadOnboardingDocument`,
-        `uploadTemporaryVoucher` and `replaceGuestDocument`. `deleteGuestDocument`
+        `uploadTemporaryVoucher`, `replaceGuestDocument`, and the corrections of a payment
+        (TAR-239): `correctPaymentByAdmin`, `correctOwnPayment` and `correctOwnPaymentTemporary`. `deleteGuestDocument`
         is the only JSON route under the same check, because it deletes personal
         data irreversibly
       content:
@@ -2401,10 +2774,11 @@ components:
   schemas:
     PagedEnvironments:
       type: object
-      required: [content, nextCursor]
+      required: [content, nextCursor, freeCount]
       properties:
         content: { type: array, items: { $ref: "#/components/schemas/Environment" } }
         nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        freeCount: { type: integer, minimum: 0, description: "Active environments free today and with nothing coming, across all pages (the A2 notice)" }
 
     PagedGuests:
       type: object
@@ -2415,10 +2789,11 @@ components:
 
     PagedExpenses:
       type: object
-      required: [content, nextCursor]
+      required: [content, nextCursor, totalCount]
       properties:
         content: { type: array, items: { $ref: "#/components/schemas/Expense" } }
         nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        totalCount: { type: integer, minimum: 0, description: "Expenses of the month, for «Mostrando X de Y» (A6, TAR-240)" }
 
     NextCursor:
       type: string
@@ -2456,10 +2831,14 @@ components:
 
     EnvironmentOccupiedError:
       type: object
-      description: The environment has a contract in force (RN-12, RN-20). The `code` is always `ENVIRONMENT_OCCUPIED`
+      description: >
+        The environment is occupied in those dates by a contract in force or a stay, now or later
+        (RN-12, RN-20, TAR-237). `occupant` says by whom, for the dialog and its link. The `code`
+        is always `ENVIRONMENT_OCCUPIED`
       required: [code, message]
       properties:
         code: { type: string, enum: [ENVIRONMENT_OCCUPIED] }
+        occupant: { $ref: "#/components/schemas/Occupant" }
         message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
 
     GuestInactiveError:
@@ -2536,21 +2915,41 @@ components:
           minItems: 1
           description: The periods owed, oldest first, so the UI can list them and offer the direct payment (RN-23)
           items: { type: string, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09" }
+        debts:
+          type: array
+          description: Everything owed with its amount, oldest first, including the unpaid stays of a temporary guest (TAR-237)
+          items:
+            type: object
+            required: [period, stayId, stayStartDate, stayEndDate, amountDue]
+            properties:
+              period: { type: string, nullable: true, pattern: "^\\d{4}-(0[1-9]|1[0-2])$" }
+              stayId: { type: string, format: uuid, nullable: true }
+              stayStartDate: { type: string, format: date, nullable: true }
+              stayEndDate: { type: string, format: date, nullable: true }
+              amountDue: { type: number }
 
     Stay:
       type: object
-      description: One visit of a temporary guest (RN-13); the stay of a guest is never edited into a new one, a new visit is a new row
-      required: [id, startDate, endDate, agreedAmount]
+      description: >
+        One visit of a temporary guest (RN-13); the stay of a guest is never edited into a new one,
+        a new visit is a new row. It occupies its environment during its dates like a contract
+        (RN-20, TAR-237); stays registered before carry no environment
+      required: [id, environmentId, environmentCode, startDate, endDate, agreedAmount, paymentStatus, paymentId]
       properties:
         id: { type: string, format: uuid }
+        environmentId: { type: string, format: uuid, nullable: true, description: "null for a stay registered before TAR-237 («Sin ambiente»)" }
+        environmentCode: { type: string, nullable: true }
         startDate: { type: string, format: date }
         endDate: { type: string, format: date, description: "On or after startDate" }
         agreedAmount: { type: number, exclusiveMinimum: true, minimum: 0, maximum: 99999999.99, multipleOf: 0.01, description: "In soles, greater than 0, at most two decimals" }
+        paymentStatus: { type: string, enum: [PAID, UNDER_REVIEW, UNPAID, OVERDUE], description: "As in StayPaymentStatus: OVERDUE once the exit date passed without an approved payment (A3.2)" }
+        paymentId: { type: string, format: uuid, nullable: true, description: "Its payment, if any" }
 
     StayInput:
       type: object
-      required: [startDate, endDate, agreedAmount]
+      required: [environmentId, startDate, endDate, agreedAmount]
       properties:
+        environmentId: { type: string, format: uuid, description: "An active environment free for the whole stay (RN-20, TAR-237); see listEnvironments with freeFrom and freeTo" }
         startDate: { type: string, format: date }
         endDate: { type: string, format: date, description: "On or after startDate" }
         agreedAmount: { type: number, exclusiveMinimum: true, minimum: 0, maximum: 99999999.99, multipleOf: 0.01, description: "In soles, greater than 0, at most two decimals" }
@@ -2561,9 +2960,10 @@ components:
       minProperties: 1
       additionalProperties: false
       properties:
+        environmentId: { type: string, format: uuid, description: "Moves the stay to another free environment (RN-20)" }
         startDate: { type: string, format: date }
         endDate: { type: string, format: date }
-        agreedAmount: { type: number, exclusiveMinimum: true, minimum: 0, maximum: 99999999.99, multipleOf: 0.01 }
+        agreedAmount: { type: number, exclusiveMinimum: true, minimum: 0, maximum: 99999999.99, multipleOf: 0.01, description: "Can be corrected even when the stay has a payment: the review compares with the new amount (decided 2026-10-30)" }
 
     PagedStays:
       type: object
@@ -2595,12 +2995,40 @@ components:
 
     Environment:
       type: object
-      required: [id, code, type, status]
+      required: [id, code, type, status, occupant, nextOccupant, freeSince]
       properties:
         id: { type: string, format: uuid }
         code: { type: string }
         type: { type: string, enum: [ROOM, CABIN] }
         status: { type: string, enum: [ACTIVE, INACTIVE] }
+        occupant: { type: object, allOf: [{ $ref: "#/components/schemas/Occupant" }], nullable: true, description: "Who occupies it today; null when free (derived from contracts and stays, RN-20)" }
+        nextOccupant: { type: object, allOf: [{ $ref: "#/components/schemas/Occupant" }], nullable: true, description: "A contract or a stay that starts after today; with occupant null, A2 shows «Libre hasta <startDate>»" }
+        freeSince: { type: string, format: date, nullable: true, description: "When it became free (end of the last contract or stay, or the creation of the environment); null when occupied" }
+        deactivatedAt: { type: string, format: date-time, nullable: true, description: "When it was deactivated; null when active" }
+
+    Occupant:
+      type: object
+      description: A contract or a stay that occupies an environment (RN-20, TAR-237)
+      required: [kind, guestId, guestName, contractId, stayId, startDate, endDate]
+      properties:
+        kind: { type: string, enum: [CONTRACT, STAY] }
+        guestId: { type: string, format: uuid }
+        guestName: { type: string, nullable: true }
+        contractId: { type: string, format: uuid, nullable: true, description: "Set when kind=CONTRACT («Ver contrato vigente»)" }
+        stayId: { type: string, format: uuid, nullable: true, description: "Set when kind=STAY («Ver huésped»)" }
+        startDate: { type: string, format: date }
+        endDate: { type: string, format: date, nullable: true, description: "null for a contract without end date" }
+
+    EnvironmentRef:
+      type: object
+      description: The environment a guest occupies, with its validity (A3 column Ambiente)
+      required: [code, type, kind, startDate, endDate]
+      properties:
+        code: { type: string }
+        type: { type: string, enum: [ROOM, CABIN] }
+        kind: { type: string, enum: [CONTRACT, STAY] }
+        startDate: { type: string, format: date }
+        endDate: { type: string, format: date, nullable: true }
 
     SessionInfo:
       description: >
@@ -2782,9 +3210,9 @@ components:
       required: [documentType, documentNumber, type, accessMode]
       properties:
         documentType: { $ref: "#/components/schemas/DocumentType" }
-        documentNumber: { type: string, minLength: 1, maxLength: 20 }
+        documentNumber: { type: string, minLength: 1, maxLength: 20, pattern: "^[A-Za-z0-9-]{1,20}$", description: "A DNI is exactly 8 digits; a CE or a passport, letters, digits or hyphen. A DNI with another shape is 400 VALIDATION_ERROR with field documentNumber (TAR-237)" }
         type: { type: string, enum: [CONTRACT, TEMPORARY] }
-        phone: { type: string, maxLength: 30, description: "Optional, to notify the guest" }
+        phone: { type: string, maxLength: 30, pattern: "^\\+?[0-9][0-9 -]{5,28}$", description: "Optional, to notify the guest: digits, spaces and hyphens, with an optional + prefix" }
         contactEmail: { type: string, format: email, maxLength: 200, description: "Optional: if present the access (the link or the temporary password, depending on accessMode) is also sent by email (RN-19)" }
         accessMode: { $ref: "#/components/schemas/AccessMode" }
 
@@ -2859,7 +3287,7 @@ components:
       properties:
         name: { type: string, minLength: 1, maxLength: 200 }
         phone: { type: string, minLength: 1, maxLength: 30 }
-        contactEmail: { type: string, format: email, maxLength: 200, description: "Optional; without it the password can only be recovered through the administrator (RF-16, RF-17)" }
+        contactEmail: { type: string, format: email, maxLength: 200, description: "Optional contact email, independent of the account email used to recover the password (D-76, RF-16, A3.9)" }
         emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
 
     ProfileUpdateInput:
@@ -2894,6 +3322,7 @@ components:
         type: { type: string, enum: [CONTRACT, TEMPORARY] }
         status: { $ref: "#/components/schemas/GuestStatus" }
         hasLoginAccess: { type: boolean }
+        environment: { type: object, allOf: [{ $ref: "#/components/schemas/EnvironmentRef" }], nullable: true, description: "Environment it occupies (contract in force or stay, including a coming one), or the last one for an inactive guest; null without any (A3, TAR-237). Only in the administrator's lists" }
 
     OnboardingProgress:
       type: string
@@ -2929,6 +3358,7 @@ components:
         hasLoginAccess: { type: boolean }
         phone: { type: string, nullable: true }
         contactEmail: { type: string, nullable: true }
+        accountEmail: { type: string, nullable: true, description: "Email of the account, for the password recovery (A3.9, PUT …/account-email); independent of the contact email (D-76)" }
         emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
         stayStartDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
         stayEndDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
@@ -2955,6 +3385,7 @@ components:
         hasLoginAccess: { type: boolean }
         phone: { type: string, nullable: true }
         contactEmail: { type: string, nullable: true }
+        accountEmail: { type: string, nullable: true, description: "Email of the account, for the password recovery (A3.9, PUT …/account-email); independent of the contact email (D-76)" }
         emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
         stayStartDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
         stayEndDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
@@ -2981,6 +3412,7 @@ components:
         hasLoginAccess: { type: boolean }
         phone: { type: string }
         contactEmail: { type: string, nullable: true }
+        accountEmail: { type: string, nullable: true, description: "Email of the account, for the password recovery (A3.9, PUT …/account-email); independent of the contact email (D-76)" }
         emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
         stayStartDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
         stayEndDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
@@ -3007,6 +3439,7 @@ components:
         hasLoginAccess: { type: boolean }
         phone: { type: string }
         contactEmail: { type: string, nullable: true }
+        accountEmail: { type: string, nullable: true, description: "Email of the account, for the password recovery (A3.9, PUT …/account-email); independent of the contact email (D-76)" }
         emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
         stayStartDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
         stayEndDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
@@ -3032,6 +3465,7 @@ components:
         hasLoginAccess: { type: boolean }
         phone: { type: string, nullable: true }
         contactEmail: { type: string, nullable: true }
+        accountEmail: { type: string, nullable: true, description: "Email of the account, for the password recovery (A3.9, PUT …/account-email); independent of the contact email (D-76)" }
         emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
         stayStartDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
         stayEndDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
@@ -3044,6 +3478,7 @@ components:
           items: { $ref: "#/components/schemas/PaymentSummary" }
         status: { type: string, enum: [INACTIVE] }
         onboardingProgress: { $ref: "#/components/schemas/OnboardingProgress" }
+        deactivatedAt: { type: string, format: date-time, nullable: true, description: "When it was deactivated (A3.2 «inactivo desde …», TAR-237)" }
 
     GuestDocumentRef:
       type: object
@@ -3128,6 +3563,7 @@ components:
         contentType: { type: string, enum: [image/jpeg, image/png, application/pdf], description: "Type of the deleted or replaced file" }
         sizeBytes: { type: integer, minimum: 1, maximum: 5242880, description: "Size of the deleted or replaced file" }
         actorId: { type: string, format: uuid, description: "The administrator who performed the action" }
+        actorName: { type: string, description: "Name of that administrator (A3.8, TAR-237)" }
         performedAt: { type: string, format: date-time }
 
     PagedGuestDocumentActions:
@@ -3227,27 +3663,47 @@ components:
 
     Contract:
       type: object
-      required: [id, environmentId, guestId, monthlyAmount, paymentDay, graceDays, startDate, status, fileUrl]
+      required: [id, environmentId, guestId, guestName, documentType, documentNumber, environmentCode, environmentType, monthlyAmount, paymentDay, graceDays, startDate, status, expiringSoon, terminatedAt, file, fileUrl]
       properties:
         id: { type: string, format: uuid }
         environmentId: { type: string, format: uuid }
         guestId: { type: string, format: uuid }
+        guestName: { type: string, nullable: true, description: "null while the guest has not given a name (TAR-237)" }
+        documentType: { $ref: "#/components/schemas/DocumentType" }
+        documentNumber: { type: string }
+        environmentCode: { type: string, description: "«201»; with environmentType, «Habitación 201» (A4, A3.2, H2)" }
+        environmentType: { type: string, enum: [ROOM, CABIN] }
         monthlyAmount: { type: number }
         paymentDay: { type: integer }
         graceDays: { type: integer }
         startDate: { type: string, format: date }
         endDate: { type: string, format: date, nullable: true, description: "null means an open-ended contract (RN-07)" }
         status: { type: string, enum: [ACTIVE, EXPIRED, TERMINATED] }
-        fileUrl: { type: string, description: "R2 signed URL, expires in 15 min; signed when the contract is requested, never stored" }
+        expiringSoon: { type: boolean, description: "ACTIVE with 30 days or fewer to the end date (RF-09, D-27); false when open-ended (H2 «Próximo a vencer», TAR-237)" }
+        terminatedAt: { type: string, format: date, nullable: true, description: "When it was terminated (RN-21); null unless TERMINATED" }
+        file:
+          type: object
+          description: The PDF of the contract (A4.2, H2)
+          required: [name, sizeBytes, uploadedAt]
+          properties:
+            name: { type: string }
+            sizeBytes: { type: integer, minimum: 1 }
+            uploadedAt: { type: string, format: date-time }
+        fileUrl: { type: string, nullable: true, description: "R2 signed URL, expires in 15 min; signed when the contract is requested, never stored. null when the storage could not sign it: the rest of the contract still comes, and «Ver contrato» shows the storage notice (TAR-237)" }
 
     ContractSummary:
       type: object
       description: A contract in a list, without the signed file URL
-      required: [id, environmentId, guestId, monthlyAmount, paymentDay, graceDays, startDate, status, expiringSoon]
+      required: [id, environmentId, guestId, guestName, documentType, documentNumber, environmentCode, environmentType, monthlyAmount, paymentDay, graceDays, startDate, status, expiringSoon, terminatedAt]
       properties:
         id: { type: string, format: uuid }
         environmentId: { type: string, format: uuid }
         guestId: { type: string, format: uuid }
+        guestName: { type: string, nullable: true, description: "null while the guest has not given a name (TAR-237)" }
+        documentType: { $ref: "#/components/schemas/DocumentType" }
+        documentNumber: { type: string }
+        environmentCode: { type: string, description: "«201»; with environmentType, «Habitación 201» (A4, A3.2, H2)" }
+        environmentType: { type: string, enum: [ROOM, CABIN] }
         monthlyAmount: { type: number }
         paymentDay: { type: integer }
         graceDays: { type: integer }
@@ -3255,6 +3711,7 @@ components:
         endDate: { type: string, format: date, nullable: true, description: "null means an open-ended contract (RN-07)" }
         status: { type: string, enum: [ACTIVE, EXPIRED, TERMINATED] }
         expiringSoon: { type: boolean, description: "ACTIVE with 30 days or fewer to the end date (RF-09, D-27); false when open-ended" }
+        terminatedAt: { type: string, format: date, nullable: true, description: "When it was terminated (RN-21); null unless TERMINATED" }
 
     PagedContracts:
       type: object
@@ -3279,10 +3736,146 @@ components:
         code: { type: string, enum: [FILE_STORAGE_UNAVAILABLE] }
         message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
 
+    ProofKind:
+      type: string
+      enum: [VOUCHER, CASH]
+      description: "VOUCHER: an image or PDF (RF-15). CASH: an amount in cash without a voucher (RN-22)"
+
+    ProofInput:
+      type: object
+      description: >
+        One proof of a payment being sent (RN-22). A VOUCHER points to its file with `fileIndex`,
+        the position of the file in the `files` part (0-based); a CASH proof has no file
+      required: [kind, amount]
+      additionalProperties: false
+      properties:
+        kind: { $ref: "#/components/schemas/ProofKind" }
+        amount: { type: number, exclusiveMinimum: true, minimum: 0, maximum: 99999999.99, multipleOf: 0.01, description: "Declared amount of this proof, in soles (RN-16)" }
+        method: { type: string, maxLength: 50, description: "Optional free text, e.g. Yape or transfer (RN-28); a CASH proof is recorded as cash" }
+        fileIndex: { type: integer, minimum: 0, maximum: 4, description: "Required for VOUCHER, absent for CASH" }
+
+    ProofEdit:
+      type: object
+      description: >
+        One proof in a correction. With `id`, an existing proof of the payment that is kept (its
+        amount or method can change, and `fileIndex` replaces its file); without `id`, a new proof
+      required: [kind, amount]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        kind: { $ref: "#/components/schemas/ProofKind" }
+        amount: { type: number, exclusiveMinimum: true, minimum: 0, maximum: 99999999.99, multipleOf: 0.01 }
+        method: { type: string, maxLength: 50 }
+        fileIndex: { type: integer, minimum: 0, maximum: 4, description: "Required for a new VOUCHER; optional for a kept one (replaces its file)" }
+
+    GuestPaymentUpload:
+      type: object
+      description: "Multipart body of `uploadPaymentVoucher`: the month, the proofs as a JSON part and their files"
+      required: [period, proofs]
+      properties:
+        period: { type: string, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09", description: "A month of the contract, up to the current month" }
+        proofs: { type: array, minItems: 1, maxItems: 5, items: { $ref: "#/components/schemas/ProofInput" } }
+        files: { type: array, maxItems: 5, items: { type: string, format: binary }, description: "JPG/PNG/PDF, ≤5MB each, checked by content (RF-15); one per VOUCHER proof" }
+
+    StayPaymentUpload:
+      type: object
+      description: "Multipart body of `uploadTemporaryVoucher`: the proofs as a JSON part and their files"
+      required: [proofs]
+      properties:
+        proofs: { type: array, minItems: 1, maxItems: 5, items: { $ref: "#/components/schemas/ProofInput" } }
+        files: { type: array, maxItems: 5, items: { type: string, format: binary }, description: "JPG/PNG/PDF, ≤5MB each, checked by content (RF-15); one per VOUCHER proof" }
+
+    DirectPaymentUpload:
+      type: object
+      description: >
+        Multipart body of `createDirectPayment`. Send exactly one of `period` (a guest with a
+        contract) or `stayId` (a temporary guest, whose single payment belongs to a stay, RN-03)
+      required: [guestId, proofs]
+      properties:
+        guestId: { type: string, format: uuid }
+        period: { type: string, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09" }
+        stayId: { type: string, format: uuid }
+        receivedOn: { type: string, format: date, description: "When the money was received; optional, by default the day of the registration; not in the future. It does not change the month the payment counts in (RF-18)" }
+        proofs: { type: array, minItems: 1, maxItems: 5, items: { $ref: "#/components/schemas/ProofInput" } }
+        files: { type: array, maxItems: 5, items: { type: string, format: binary }, description: "JPG/PNG/PDF, ≤5MB each, checked by content (RF-15); one per VOUCHER proof" }
+
+    ProofsCorrection:
+      type: object
+      description: "Multipart body of a correction: the whole new set of proofs as a JSON part and the new files"
+      required: [proofs]
+      properties:
+        proofs: { type: array, minItems: 1, maxItems: 5, items: { $ref: "#/components/schemas/ProofEdit" } }
+        files: { type: array, maxItems: 5, items: { type: string, format: binary }, description: "JPG/PNG/PDF, ≤5MB each, checked by content (RF-15)" }
+
+    ProofFileInfo:
+      type: object
+      description: The file of a voucher, without its URL
+      required: [name, contentType, sizeBytes]
+      properties:
+        name: { type: string, description: "Sanitized file name" }
+        contentType: { type: string, enum: [image/jpeg, image/png, application/pdf] }
+        sizeBytes: { type: integer, minimum: 1 }
+
+    GuestProof:
+      type: object
+      description: A proof of a payment as its own guest sees it (no voucher URL)
+      required: [id, kind, declaredAmount, verifiedAmount, uploadedBy, addedAt]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { $ref: "#/components/schemas/ProofKind" }
+        method: { type: string, nullable: true }
+        declaredAmount: { type: number, description: "What was declared for this proof, in soles" }
+        verifiedAmount: { type: number, nullable: true, description: "What the administrator verified (RN-16); null until the payment is approved" }
+        uploadedBy: { type: string, enum: [GUEST, ADMIN], description: "Who added the proof (RN-22)" }
+        addedAt: { type: string, format: date-time }
+        receivedOn: { type: string, format: date, nullable: true, description: "When the administration received the money (direct payments only)" }
+        file: { type: object, allOf: [{ $ref: "#/components/schemas/ProofFileInfo" }], nullable: true, description: "null for CASH" }
+
+    AdminProof:
+      type: object
+      description: A proof of a payment in the administrator's detail, with its signed voucher URL
+      required: [id, kind, declaredAmount, verifiedAmount, uploadedBy, addedAt, fileUrl]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { $ref: "#/components/schemas/ProofKind" }
+        method: { type: string, nullable: true }
+        declaredAmount: { type: number }
+        verifiedAmount: { type: number, nullable: true }
+        uploadedBy: { type: string, enum: [GUEST, ADMIN] }
+        addedAt: { type: string, format: date-time }
+        receivedOn: { type: string, format: date, nullable: true }
+        file: { type: object, allOf: [{ $ref: "#/components/schemas/ProofFileInfo" }], nullable: true, description: "null for CASH" }
+        fileUrl: { type: string, nullable: true, description: "R2 signed URL, expires in 15 min, forces the download; null for CASH" }
+
+    PaymentReview:
+      type: object
+      description: One decision on a payment (payment_reviews)
+      required: [decision, at]
+      properties:
+        decision: { type: string, enum: [APPROVED, REJECTED] }
+        reason: { type: string, nullable: true }
+        at: { type: string, format: date-time }
+
+    ReviewerRef:
+      type: object
+      description: The administrator who resolved a payment (TAR-230); only in the administrator's views
+      required: [id, name]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+
+    PaymentSurplus:
+      type: object
+      description: What was left over when the payment was approved (RN-38, RN-39)
+      required: [amount, outcome]
+      properties:
+        amount: { type: number }
+        outcome: { type: string, enum: [CREDIT, REFUND_PENDING, REFUNDED], description: "CREDIT: discounted from the next period. REFUND_PENDING / REFUNDED: last period of a contract or a stay, returned by Quipu" }
+
     PaymentSummary:
       type: object
-      description: A payment without its voucher URL — what lists and the guest's own responses carry
-      required: [id, guestId, contractId, stayId, period, amount, status, createdAt]
+      description: A payment without its proofs' URLs — what lists and the guest's own responses carry
+      required: [id, guestId, contractId, stayId, period, amount, verifiedAmount, status, proofCount, voucherCount, hasCash, submittedAt, createdAt]
       oneOf:
         - description: A period of a contract (guest with a contract)
           additionalProperties: true
@@ -3302,17 +3895,24 @@ components:
         contractId: { type: string, format: uuid, nullable: true, description: "The contract the period belongs to; null for a temporary guest" }
         stayId: { type: string, format: uuid, nullable: true, description: "The stay a temporary guest paid for; null for a guest with a contract" }
         period: { type: string, nullable: true, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09", description: "null for a temporary guest (RN-03)" }
-        amount: { type: number, description: "Declared amount, in soles" }
-        paymentMethod: { type: string, nullable: true, description: "Free text per payment (RN-28)" }
+        amount: { type: number, description: "Sum of the declared amounts of its proofs, in soles" }
+        verifiedAmount: { type: number, nullable: true, description: "Sum of the verified amounts (RN-16); null until approved" }
+        paymentMethod: { type: string, nullable: true, deprecated: true, description: "Method of its first proof; each proof carries its own method now (TAR-239)" }
         status: { type: string, enum: [PENDING, APPROVED, REJECTED] }
         rejectionReason: { type: string, nullable: true, description: "Shown to the guest in the app only, never by email (D-34d)" }
+        proofCount: { type: integer, minimum: 1, maximum: 5 }
+        voucherCount: { type: integer, minimum: 0, maximum: 5 }
+        hasCash: { type: boolean }
         reviewedAt: { type: string, format: date-time, nullable: true }
+        submittedAt: { type: string, format: date-time, description: "Last time it was sent (a corrected payment is sent again)" }
         createdAt: { type: string, format: date-time }
 
     Payment:
       type: object
-      description: A payment with its signed voucher URL (admin detail, `getPayment`)
-      required: [id, guestId, contractId, stayId, period, amount, status, voucherUrl, createdAt]
+      description: >
+        A payment in the administrator's detail (`getPayment`): what is being paid, its proofs with
+        their signed URLs and its reviews (A5.2, TAR-239)
+      required: [id, guestId, guestName, documentNumber, guestType, environmentCode, contractId, stayId, period, stayStartDate, stayEndDate, expectedAmount, creditApplied, amountDue, lastPeriod, amount, verifiedAmount, status, reviewedBy, submittedAt, createdAt, proofs, reviews]
       oneOf:
         - description: A period of a contract (guest with a contract)
           additionalProperties: true
@@ -3329,16 +3929,30 @@ components:
       properties:
         id: { type: string, format: uuid }
         guestId: { type: string, format: uuid }
+        guestName: { type: string, nullable: true, description: "null while the guest has not given a name in the onboarding" }
+        documentNumber: { type: string }
+        guestType: { type: string, enum: [CONTRACT, TEMPORARY] }
+        environmentCode: { type: string, nullable: true, description: "null for a stay without environment (TAR-237)" }
         contractId: { type: string, format: uuid, nullable: true }
         stayId: { type: string, format: uuid, nullable: true }
         period: { type: string, nullable: true, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09" }
-        amount: { type: number, description: "Declared amount, in soles" }
-        paymentMethod: { type: string, nullable: true, description: "Free text per payment (RN-28)" }
+        stayStartDate: { type: string, format: date, nullable: true, description: "Stay dates; null for a guest with a contract" }
+        stayEndDate: { type: string, format: date, nullable: true }
+        expectedAmount: { type: number, description: "Monthly amount of the contract or agreed amount of the stay" }
+        creditApplied: { type: number, minimum: 0, description: "Credit of the guest discounted from this period (RN-38); 0 for a stay" }
+        amountDue: { type: number, description: "expectedAmount - creditApplied: what the verified sum must cover to approve" }
+        lastPeriod: { type: boolean, description: "Last period of the contract, or a stay: what is left over is refunded instead of kept as credit (RN-38)" }
+        amount: { type: number, description: "Sum of the declared amounts" }
+        verifiedAmount: { type: number, nullable: true }
         status: { type: string, enum: [PENDING, APPROVED, REJECTED] }
         rejectionReason: { type: string, nullable: true }
+        surplus: { type: object, allOf: [{ $ref: "#/components/schemas/PaymentSurplus" }], nullable: true }
         reviewedAt: { type: string, format: date-time, nullable: true }
-        voucherUrl: { type: string, description: "R2 signed URL, expires in 15 min; signed when the payment is requested, never stored — every payment has a voucher, no exceptions (RN-22, includes admin-direct payments per RN-23)" }
+        reviewedBy: { type: object, allOf: [{ $ref: "#/components/schemas/ReviewerRef" }], nullable: true, description: "Who resolved it last (TAR-230); null while pending" }
+        submittedAt: { type: string, format: date-time }
         createdAt: { type: string, format: date-time }
+        proofs: { type: array, minItems: 1, maxItems: 5, items: { $ref: "#/components/schemas/AdminProof" } }
+        reviews: { type: array, items: { $ref: "#/components/schemas/PaymentReview" }, description: "Oldest first" }
 
     PagedPayments:
       type: object
@@ -3347,10 +3961,166 @@ components:
         content: { type: array, items: { $ref: "#/components/schemas/PaymentSummary" } }
         nextCursor: { $ref: "#/components/schemas/NextCursor" }
 
+    DashboardCharge:
+      type: object
+      description: A row of «Cobros del mes» in A1 (TAR-236)
+      required: [guestId, guestName, documentType, documentNumber, guestType, environmentCode, contractId, stayId, period, stayStartDate, stayEndDate, amount, dueDate, status, paymentId]
+      properties:
+        guestId: { type: string, format: uuid }
+        guestName: { type: string, nullable: true }
+        documentType: { $ref: "#/components/schemas/DocumentType" }
+        documentNumber: { type: string }
+        guestType: { type: string, enum: [CONTRACT, TEMPORARY] }
+        environmentCode: { type: string, nullable: true, description: "Null for an old stay without environment (TAR-237)" }
+        contractId: { type: string, format: uuid, nullable: true }
+        stayId: { type: string, format: uuid, nullable: true }
+        period: { type: string, nullable: true, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", description: "Period of a contract; null for a stay" }
+        stayStartDate: { type: string, format: date, nullable: true }
+        stayEndDate: { type: string, format: date, nullable: true }
+        amount: { type: number, description: "Monthly amount or agreed amount of the stay, minus the credit applied (RN-38)" }
+        dueDate: { type: string, format: date, description: "Payment day of the period (RN-10) or the check-out date of the stay" }
+        status: { type: string, enum: [PAID, UNDER_REVIEW, UNPAID, OVERDUE] }
+        paymentId: { type: string, format: uuid, nullable: true, description: "The live payment when UNDER_REVIEW, to open A5.2" }
+
+    DashboardChargeRef:
+      type: object
+      required: [guestId, guestName, environmentCode, period, stayStartDate, stayEndDate, dueDate, amount]
+      properties:
+        guestId: { type: string, format: uuid }
+        guestName: { type: string, nullable: true }
+        environmentCode: { type: string, nullable: true }
+        period: { type: string, nullable: true }
+        stayStartDate: { type: string, format: date, nullable: true }
+        stayEndDate: { type: string, format: date, nullable: true }
+        dueDate: { type: string, format: date }
+        amount: { type: number }
+
+    DashboardOverdue:
+      type: object
+      description: Overdue charges, of this month or earlier (RN-10, RN-25)
+      required: [count, total, first]
+      properties:
+        count: { type: integer, minimum: 0 }
+        total: { type: number, minimum: 0 }
+        first: { type: array, maxItems: 3, description: "The oldest ones first", items: { $ref: "#/components/schemas/DashboardChargeRef" } }
+
+    DashboardRejected:
+      type: object
+      description: Payments rejected that nobody has corrected yet (RN-05, A5 Rechazados)
+      required: [count, oldest]
+      properties:
+        count: { type: integer, minimum: 0 }
+        oldest:
+          type: object
+          nullable: true
+          required: [paymentId, guestName, period, stayStartDate, stayEndDate, rejectedAt]
+          properties:
+            paymentId: { type: string, format: uuid }
+            guestName: { type: string, nullable: true }
+            period: { type: string, nullable: true }
+            stayStartDate: { type: string, format: date, nullable: true }
+            stayEndDate: { type: string, format: date, nullable: true }
+            rejectedAt: { type: string, format: date-time }
+
+    DashboardRefunds:
+      type: object
+      description: Credit to refund (RN-38, RN-39); the detail is in GET /admin/credits?pending=true
+      required: [count, total]
+      properties:
+        count: { type: integer, minimum: 0, description: "Guests with credit to refund" }
+        total: { type: number, minimum: 0 }
+
+    DashboardExpiringContracts:
+      type: object
+      description: Active contracts that end in 30 days or less (RN-07, expiringSoon)
+      required: [count, first]
+      properties:
+        count: { type: integer, minimum: 0 }
+        first:
+          type: object
+          nullable: true
+          description: The one that ends first
+          required: [contractId, guestName, environmentCode, endDate]
+          properties:
+            contractId: { type: string, format: uuid }
+            guestName: { type: string, nullable: true }
+            environmentCode: { type: string }
+            endDate: { type: string, format: date }
+
+    DashboardGuestsNotActivated:
+      type: object
+      description: Guests pending activation (RN-32, RN-36)
+      required: [count, expired, first]
+      properties:
+        count: { type: integer, minimum: 0 }
+        expired: { type: integer, minimum: 0, description: "How many of them have their access expired" }
+        first:
+          type: object
+          nullable: true
+          description: An expired one first, otherwise the one whose access ends first
+          required: [guestId, documentType, documentNumber, accessExpiresAt]
+          properties:
+            guestId: { type: string, format: uuid }
+            documentType: { $ref: "#/components/schemas/DocumentType" }
+            documentNumber: { type: string }
+            accessExpiresAt: { type: string, format: date-time, nullable: true }
+
+    GuestPayment:
+      type: object
+      description: One own payment as the guest sees it (H3 «Tu pago», H4), without voucher URLs nor who reviewed it
+      required: [id, contractId, stayId, period, status, amount, verifiedAmount, creditApplied, amountDue, submittedAt, createdAt, proofs, reviews]
+      properties:
+        id: { type: string, format: uuid }
+        contractId: { type: string, format: uuid, nullable: true }
+        stayId: { type: string, format: uuid, nullable: true }
+        period: { type: string, nullable: true, pattern: "^\\d{4}-(0[1-9]|1[0-2])$" }
+        stayStartDate: { type: string, format: date, nullable: true }
+        stayEndDate: { type: string, format: date, nullable: true }
+        status: { type: string, enum: [PENDING, APPROVED, REJECTED] }
+        amount: { type: number, description: "Sum of the declared amounts" }
+        verifiedAmount: { type: number, nullable: true }
+        creditApplied: { type: number, minimum: 0 }
+        amountDue: { type: number }
+        surplus: { type: object, allOf: [{ $ref: "#/components/schemas/PaymentSurplus" }], nullable: true }
+        rejectionReason: { type: string, nullable: true }
+        submittedAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        proofs: { type: array, minItems: 1, maxItems: 5, items: { $ref: "#/components/schemas/GuestProof" } }
+        reviews: { type: array, items: { $ref: "#/components/schemas/PaymentReview" }, description: "What happened, oldest first («Lo que pasó» in H4)" }
+
+    GuestRefund:
+      type: object
+      description: A refund Quipu made to the guest (RN-39), shown in H4 with the label Devuelto
+      required: [id, date, method, amount, fromPaymentId]
+      properties:
+        id: { type: string, format: uuid }
+        date: { type: string, format: date }
+        method: { type: string }
+        amount: { type: number }
+        fromPaymentId: { type: string, format: uuid, description: "The payment whose surplus was refunded" }
+        fromPeriod: { type: string, nullable: true, pattern: "^\\d{4}-(0[1-9]|1[0-2])$" }
+
+    GuestHistoryItem:
+      type: object
+      description: "An item of the guest's history: a payment or a refund, by `kind`"
+      required: [kind, payment, refund]
+      properties:
+        kind: { type: string, enum: [PAYMENT, REFUND] }
+        payment: { type: object, allOf: [{ $ref: "#/components/schemas/GuestPayment" }], nullable: true, description: "Set when kind=PAYMENT" }
+        refund: { type: object, allOf: [{ $ref: "#/components/schemas/GuestRefund" }], nullable: true, description: "Set when kind=REFUND" }
+
+    PagedGuestHistory:
+      type: object
+      required: [content, nextCursor, creditBalance]
+      properties:
+        content: { type: array, items: { $ref: "#/components/schemas/GuestHistoryItem" } }
+        nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        creditBalance: { type: number, minimum: 0, description: "Credit the guest has now, to be discounted from the next period (RN-38)" }
+
     PaymentQueueItem:
       type: object
       description: A row of the review queue (A5); it does not show the amount
-      required: [id, guestId, guestName, documentNumber, guestType, environmentCode, period, status, createdAt]
+      required: [id, guestId, guestName, documentNumber, guestType, environmentCode, period, stayStartDate, stayEndDate, status, proofCount, voucherCount, hasCash, submittedAt, createdAt]
       oneOf:
         - description: A guest with a contract, with its environment and period
           additionalProperties: true
@@ -3358,7 +4128,7 @@ components:
             guestType: { type: string, enum: [CONTRACT] }
             environmentCode: { type: string }
             period: { type: string }
-        - description: A temporary guest, with no environment and no period (shown as Temporal)
+        - description: A temporary guest, with no environment and no period (shown as Temporal until TAR-237)
           additionalProperties: true
           properties:
             guestType: { type: string, enum: [TEMPORARY] }
@@ -3372,8 +4142,15 @@ components:
         guestType: { type: string, enum: [CONTRACT, TEMPORARY] }
         environmentCode: { type: string, nullable: true, description: "null for a temporary guest (shown as Temporal)" }
         period: { type: string, nullable: true, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09" }
+        stayStartDate: { type: string, format: date, nullable: true, description: "Stay dates of a temporary guest («20 – 31 oct»); null for a contract" }
+        stayEndDate: { type: string, format: date, nullable: true }
         status: { type: string, enum: [PENDING, APPROVED, REJECTED] }
-        createdAt: { type: string, format: date-time, description: "When the voucher was uploaded" }
+        proofCount: { type: integer, minimum: 1, maximum: 5 }
+        voucherCount: { type: integer, minimum: 0, maximum: 5, description: "With hasCash, the Comprobantes column («2 vouchers», «1 voucher y efectivo»)" }
+        hasCash: { type: boolean }
+        reviewedBy: { type: object, allOf: [{ $ref: "#/components/schemas/ReviewerRef" }], nullable: true, description: "Who resolved it (TAR-230); null while pending" }
+        submittedAt: { type: string, format: date-time, description: "Last time it was sent; orders the queue" }
+        createdAt: { type: string, format: date-time, description: "When the payment was first sent" }
 
     PagedPaymentQueue:
       type: object
@@ -3384,20 +4161,39 @@ components:
 
     PeriodStatus:
       type: object
-      required: [period, status, dueDate, amount, contractId]
+      required: [period, status, dueDate, amount, creditApplied, amountDue, contractId]
       properties:
         period: { type: string, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09" }
         status: { type: string, enum: [PAID, UNDER_REVIEW, UNPAID, OVERDUE] }
         dueDate: { type: string, format: date, description: "Payment day of the month, or its last day when the month is shorter (RN-10); the grace days come on top" }
         amount: { type: number, description: "Monthly amount of the contract" }
+        creditApplied: { type: number, minimum: 0, description: "Credit of the guest discounted from this period (RN-38), at most `amount`" }
+        amountDue: { type: number, minimum: 0, description: "amount - creditApplied: what is left to pay (H1 «S/ 750.00»). When the credit covers the whole period it is 0 and the period is PAID without a payment (`paymentId` null); the credit left passes on to the next period, month by month (RN-38, decided 2026-11-01)" }
         contractId: { type: string, format: uuid }
-        paymentId: { type: string, format: uuid, nullable: true, description: "The live or last payment of the period, if any" }
-        rejectionReason: { type: string, nullable: true, description: "Reason of the last rejected voucher while no other payment is alive (D-34d); a rejected period stays UNPAID or OVERDUE" }
+        paymentId: { type: string, format: uuid, nullable: true, description: "The live or last payment of the period, if any; null for a period paid with credit only" }
+        rejectionReason: { type: string, nullable: true, description: "Reason of the last rejection while the payment stays rejected (D-34d); a rejected period stays UNPAID or OVERDUE" }
+
+    GuestCredit:
+      type: object
+      description: Credit of a guest with a contract (RN-38, RN-39)
+      required: [balance, toRefund, lastRefund]
+      properties:
+        balance: { type: number, minimum: 0, description: "Credit the guest has now; 0 when none" }
+        toRefund: { type: boolean, description: "true when no period is left where to use it, so Quipu refunds it (A6.5)" }
+        lastRefund:
+          type: object
+          nullable: true
+          description: The last refund Quipu made to the guest (H1 «Te devolvimos S/ 120.00 el 3 de noviembre por Yape»)
+          required: [amount, date, method]
+          properties:
+            amount: { type: number }
+            date: { type: string, format: date }
+            method: { type: string }
 
     StayPaymentStatus:
       type: object
       description: Payment status of one stay of a temporary guest (CU-21)
-      required: [stayId, startDate, endDate, status, agreedAmount]
+      required: [stayId, startDate, endDate, status, agreedAmount, surplus]
       properties:
         stayId: { type: string, format: uuid }
         startDate: { type: string, format: date }
@@ -3406,6 +4202,44 @@ components:
         agreedAmount: { type: number }
         paymentId: { type: string, format: uuid, nullable: true }
         rejectionReason: { type: string, nullable: true }
+        surplus:
+          type: object
+          nullable: true
+          description: "What was paid over the agreed amount: a stay keeps no credit, it is refunded (RN-38, RN-39, T1)"
+          required: [amount, refundStatus]
+          properties:
+            amount: { type: number }
+            refundStatus: { type: string, enum: [PENDING, REFUNDED] }
+            refundedOn: { type: string, format: date, nullable: true }
+            refundMethod: { type: string, nullable: true }
+
+    PayablePeriod:
+      type: object
+      description: A period or a stay of the guest for a direct payment (A5.1)
+      required: [contractId, period, stayId, stayStartDate, stayEndDate, status, dueDate, expectedAmount, creditApplied, amountDue, lastPeriod, paymentId]
+      properties:
+        contractId: { type: string, format: uuid, nullable: true }
+        period: { type: string, nullable: true, pattern: "^\\d{4}-(0[1-9]|1[0-2])$" }
+        stayId: { type: string, format: uuid, nullable: true }
+        stayStartDate: { type: string, format: date, nullable: true }
+        stayEndDate: { type: string, format: date, nullable: true }
+        status: { type: string, enum: [UNPAID, OVERDUE, UNDER_REVIEW, REJECTED], description: "UNPAID and OVERDUE take a direct payment; UNDER_REVIEW and REJECTED are completed in A5.2" }
+        dueDate: { type: string, format: date, description: "Payment day of the period, or exit date of the stay" }
+        expectedAmount: { type: number }
+        creditApplied: { type: number, minimum: 0 }
+        amountDue: { type: number }
+        lastPeriod: { type: boolean }
+        paymentId: { type: string, format: uuid, nullable: true, description: "Set when UNDER_REVIEW or REJECTED" }
+
+    PaymentNotCorrectableError:
+      type: object
+      description: >
+        The payment cannot be corrected in its state: the guest corrects only a REJECTED payment,
+        the administrator a PENDING or REJECTED one. The `code` is always `PAYMENT_NOT_CORRECTABLE`
+      required: [code, message]
+      properties:
+        code: { type: string, enum: [PAYMENT_NOT_CORRECTABLE] }
+        message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
 
     VoucherAlreadyExistsError:
       type: object
@@ -3442,6 +4276,61 @@ components:
         code: { type: string, enum: [PAYMENT_PERIOD_NOT_PAYABLE] }
         message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
 
+    RefundInput:
+      type: object
+      required: [guestId, amount, date, method]
+      additionalProperties: false
+      properties:
+        guestId: { type: string, format: uuid }
+        amount: { type: number, exclusiveMinimum: true, minimum: 0, maximum: 99999999.99, multipleOf: 0.01, description: "In soles; at most the pending credit of the guest (RN-38)" }
+        date: { type: string, format: date, description: "When the money was returned; not in the future. The refund counts in this date's month (RN-39)" }
+        method: { type: string, minLength: 1, maxLength: 50, pattern: '\S', description: "Free text, e.g. Yape or transfer; required (RN-39)" }
+        note: { type: string, maxLength: 500, description: "Optional; blank means none" }
+
+    Refund:
+      type: object
+      description: A refund as the BFF answers it, with the guest it went to
+      required: [id, guestId, guestName, environmentCode, amount, date, method, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        guestId: { type: string, format: uuid }
+        guestName: { type: string, nullable: true }
+        environmentCode: { type: string, nullable: true, description: "The environment of the contract or stay the credit came from; null for a stay without environment (TAR-237)" }
+        amount: { type: number }
+        date: { type: string, format: date }
+        method: { type: string }
+        note: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    PagedRefunds:
+      type: object
+      required: [content, nextCursor, totalCount]
+      properties:
+        content: { type: array, items: { $ref: "#/components/schemas/Refund" } }
+        nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        totalCount: { type: integer, minimum: 0, description: "Refunds of the month, for «Mostrando X de Y»" }
+
+    PendingCredit:
+      type: object
+      description: Credit of a guest that has to be refunded (RN-38)
+      required: [guestId, guestName, guestType, environmentCode, amount, origin]
+      properties:
+        guestId: { type: string, format: uuid }
+        guestName: { type: string, nullable: true }
+        guestType: { type: string, enum: [CONTRACT, TEMPORARY] }
+        environmentCode: { type: string, nullable: true }
+        amount: { type: number, description: "Pending credit, after any partial refund" }
+        origin:
+          type: object
+          description: Where the credit came from («Sobró del pago de octubre; su contrato terminó el 15 oct»)
+          required: [paymentId, period, stayStartDate, stayEndDate, contractEndedOn]
+          properties:
+            paymentId: { type: string, format: uuid }
+            period: { type: string, nullable: true, pattern: "^\\d{4}-(0[1-9]|1[0-2])$" }
+            stayStartDate: { type: string, format: date, nullable: true }
+            stayEndDate: { type: string, format: date, nullable: true }
+            contractEndedOn: { type: string, format: date, nullable: true, description: "End or termination date when the contract is over; null otherwise" }
+
     ExpenseInput:
       type: object
       required: [category, amount, month]
@@ -3462,11 +4351,13 @@ components:
 
     Fine:
       type: object
-      description: A fine as the BFF answers it; the fields of `FineInput`, with the same constraints, plus its `id`. The description is left out when there is none.
-      required: [id, guestId, amount, month]
+      description: A fine as the BFF answers it; the fields of `FineInput`, with the same constraints, plus its `id` and who it was charged to. The description is left out when there is none.
+      required: [id, guestId, guestName, environmentCode, amount, month]
       properties:
         id: { type: string, format: uuid }
         guestId: { type: string, format: uuid }
+        guestName: { type: string, nullable: true, description: "For the Multas table of A6 (TAR-240)" }
+        environmentCode: { type: string, nullable: true, description: "The guest's environment when the fine was charged, or its last one; null if it never had one" }
         amount: { type: number, exclusiveMinimum: true, minimum: 0, maximum: 99999999.99, multipleOf: 0.01, description: "In soles, greater than 0, at most two decimals" }
         month: { type: string, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09" }
         description: { type: string, maxLength: 500 }
