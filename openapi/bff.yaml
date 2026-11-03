@@ -3478,11 +3478,15 @@ components:
 
     EmergencyContact:
       type: object
-      description: Optional, never blocks guest registration (RN-29)
+      description: >
+        Optional, never blocks guest registration (RN-29). The limits are those
+        of its columns; a longer value or a field it does not define is 400
+        VALIDATION_ERROR with `field` = `emergencyContact.<name>`.
+      additionalProperties: false
       properties:
-        name: { type: string }
-        relationship: { type: string }
-        phone: { type: string }
+        name: { type: string, maxLength: 200 }
+        relationship: { type: string, maxLength: 50 }
+        phone: { type: string, maxLength: 30 }
 
     GuestUpdateInput:
       type: object
@@ -3524,10 +3528,11 @@ components:
           type: object
           nullable: true
           description: "The fields of EmergencyContact, inline: an allOf with that schema would reject null (OAS 3.0.3). Null when the guest saved none (RN-29)"
+          additionalProperties: false
           properties:
-            name: { type: string }
-            relationship: { type: string }
-            phone: { type: string }
+            name: { type: string, maxLength: 200 }
+            relationship: { type: string, maxLength: 50 }
+            phone: { type: string, maxLength: 30 }
         accountEmail: { type: string, format: email, nullable: true, description: "Where the password recovery link goes (RF-16); read-only for the guest, the administration changes it (A3.9). Null when it has none" }
         documents: { type: array, maxItems: 5, items: { $ref: "#/components/schemas/GuestDocumentRef" } }
         documentsLimit: { type: integer, minimum: 1, description: "How many documents a guest may have (5, RN-37)" }
