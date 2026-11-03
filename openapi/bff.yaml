@@ -625,9 +625,11 @@ paths:
       description: >-
         Reactivates an inactive ADMIN account, effective immediately: it can log in again. The caller
         re-authenticates with `currentPassword`, checked before anything else. Reactivating an
-        active administrator is idempotent: 204 and nothing changes. When the account changes,
-        every other active administrator is notified by email (best-effort). Its own rate limit:
-        3 requests per minute per session user.
+        active administrator is idempotent: 204 and nothing changes. Inactive administrators do not
+        count toward the configurable maximum of administrators (5); reactivating one when that
+        maximum of non-inactive administrators is already reached answers 409 `ADMIN_LIMIT_REACHED`
+        and nothing changes. When the account changes, every other active administrator is notified
+        by email (best-effort). Its own rate limit: 3 requests per minute per session user.
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       parameters: [{ $ref: "#/components/parameters/Id" }]
@@ -649,6 +651,16 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "404": { $ref: "#/components/responses/AdministratorNotFound" }
+        "409":
+          description: >-
+            `ADMIN_LIMIT_REACHED` (the maximum number of non-inactive administrators already exists;
+            inactive administrators do not count)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example:
+                code: ADMIN_LIMIT_REACHED
+                message: Ya existe el número máximo de administradores
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
   # ───────────────────────── ADMIN: GUESTS (RF-02, RF-13, RF-14, RF-17, CU-02, CU-06, CU-10, CU-11, CU-13) ─────────────────────────
