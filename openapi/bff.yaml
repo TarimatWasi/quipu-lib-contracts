@@ -4441,10 +4441,24 @@ components:
     GuestCredit:
       type: object
       description: Credit of a guest with a contract (RN-38, RN-39)
-      required: [balance, toRefund, lastRefund]
+      required: [balance, toRefund, origins, lastRefund]
       properties:
         balance: { type: number, minimum: 0, description: "Credit the guest has now; 0 when none" }
         toRefund: { type: boolean, description: "true when no period is left where to use it, so Quipu refunds it (A6.5)" }
+        origins:
+          type: array
+          description: >
+            The payments the credit the guest still uses in the coming periods was left over from
+            (`balance` while `toRefund` is false), and how much each one adds, oldest first (H1
+            «Tienes S/ … a favor.» says which month it was left over from, RN-38, TAR-284). Credit
+            that already passed to be refunded is not listed here. Empty when there is none.
+          items:
+            type: object
+            required: [paymentId, period, amount]
+            properties:
+              paymentId: { type: string, format: uuid, description: "The payment the credit was left over from" }
+              period: { type: string, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", example: "2026-09", description: "Period of that payment" }
+              amount: { type: number, description: "Credit left over from that payment that is still to be used" }
         lastRefund:
           type: object
           nullable: true
