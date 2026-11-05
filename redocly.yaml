@@ -1,0 +1,8 @@
+# Lint del spec del BFF. Los dos avisos apagados son deliberados: la licencia es propietaria y no
+# tiene URL, y PasswordChangeRequired documenta un 403 que aplica a todo endpoint autenticado
+# (OpenAPI 3.0 no tiene respuestas globales), por eso ninguna operación lo referencia.
+extends:
+  - recommended
+rules:
+  info-license-strict: off
+  no-unused-components: off

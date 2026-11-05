@@ -1,0 +1,48 @@
+name: ci
+on:
+  pull_request:
+    branches: [main, development]
+permissions:
+  contents: read
+jobs:
+  # El spec debe ser un OpenAPI válido.
+  contract-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      # Sin scripts de instalación (Sonar S6505): el lint no los necesita.
+      - run: npm install --no-save --ignore-scripts @redocly/cli@2.57.0
+      - run: node_modules/.bin/redocly lint openapi/bff.yaml
+
+  # Un cambio incompatible respecto al último tag falla, salvo que el PR lleve la etiqueta
+  # `breaking-change` (cambio intencional: se publica un tag nuevo y los consumidores migran).
+  # La acción corre en un contenedor que solo ve el workspace: el spec base va en un archivo ahí
+  # (no en RUNNER_TEMP).
+  breaking-changes:
+    runs-on: ubuntu-latest
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'breaking-change') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Spec del último tag
+        id: base
+        run: |
+          tag=$(git tag --list 'v*' --sort=-v:refname | head -n 1)
+          if [ -z "$tag" ]; then
+            echo "Sin tags todavía: no hay contra qué comparar."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          else
+            git show "$tag:openapi/bff.yaml" > base-bff.yaml
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "Comparando contra $tag"
+          fi
+      - if: steps.base.outputs.found == 'true'
+        uses: oasdiff/oasdiff-action/breaking@9ce3a29eb0e6478dd0140932a678c7fb59d08f22 # v0.1.20
+        with:
+          base: base-bff.yaml
+          revision: openapi/bff.yaml
+          fail-on: ERR
