@@ -4385,7 +4385,7 @@ components:
     PaymentQueueItem:
       type: object
       description: A row of the review queue (A5); it does not show the amount
-      required: [id, guestId, guestName, documentNumber, guestType, environmentCode, period, stayStartDate, stayEndDate, status, proofCount, voucherCount, hasCash, submittedAt, createdAt]
+      required: [id, guestId, guestName, documentNumber, guestType, environmentCode, period, stayStartDate, stayEndDate, status, proofCount, voucherCount, hasCash, rejectionReason, reviewedAt, submittedAt, createdAt]
       oneOf:
         - description: A guest with a contract, with its environment and period
           additionalProperties: true
@@ -4414,6 +4414,8 @@ components:
         voucherCount: { type: integer, minimum: 0, maximum: 5, description: "With hasCash, the Comprobantes column («2 vouchers», «1 voucher y efectivo»)" }
         hasCash: { type: boolean }
         reviewedBy: { anyOf: [{ $ref: "#/components/schemas/ReviewerRef" }, { type: object, nullable: true, enum: [null] }], description: "Who resolved it (TAR-230); null while pending" }
+        rejectionReason: { type: string, nullable: true, description: "Reason of the rejection, for the row of the Rechazados view («Motivo: …», TAR-296); null unless the status is REJECTED. It is not sent by mail (D-34d)" }
+        reviewedAt: { type: string, format: date-time, nullable: true, description: "When it was resolved («rechazado hace N días», TAR-296); null while pending" }
         submittedAt: { type: string, format: date-time, description: "Last time it was sent; orders the queue" }
         createdAt: { type: string, format: date-time, description: "When the payment was first sent" }
 
