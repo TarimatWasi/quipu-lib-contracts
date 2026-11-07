@@ -20,6 +20,19 @@ info:
     or shared across sessions; an id obtained in another session answers 404,
     like an unknown one. A pagination cursor may embed such ids: use it only
     in the session that received it (one from another session can be a 400).
+    CSRF (TAR-300): every POST, PUT, PATCH and DELETE requires the
+    X-XSRF-TOKEN header and its matching XSRF-TOKEN cookie, including public
+    authentication endpoints, bodyless actions and multipart uploads. Obtain
+    the cookie first with GET /auth/csrf. Safe methods do not require a CSRF
+    token and must not modify business data. Angular uses relative /bff URLs
+    through the same-origin proxy and its native HttpClient XSRF support.
+    The CSRF token is separate from the HttpOnly JWT and never authenticates
+    the caller. Successful login, activation and password change rotate the
+    CSRF cookie; logout expires both cookies. Failed operations do not rotate
+    it. A missing or invalid CSRF pair can answer 403 AUTH_CSRF_INVALID before
+    a possible 401, 400 or 415. These are enforced-mode requirements: deploy
+    bootstrap support and the prepared frontend before enabling enforcement
+    on all backend nodes.
   version: "1.0"
   license:
     name: Proprietary - all rights reserved (Tarimat Wasi)
@@ -56,8 +69,40 @@ tags:
 
 paths:
   # ───────────────────────── AUTH (RF-08, RF-11, RF-12, RF-16, RF-17) ─────────────────────────
+  /auth/csrf:
+    get:
+      operationId: getCsrfToken
+      tags: [auth]
+      summary: Prepare the browser CSRF cookie (TAR-300)
+      description: >
+        Makes a CSRF token available in the XSRF-TOKEN cookie without requiring
+        a session. An expired or malformed JWT cookie is ignored on this route.
+        Reuses an existing token; repeated GET requests do not rotate it.
+        The cookie is readable by Angular (HttpOnly=false), Secure in deployed
+        environments, SameSite=Lax, Path=/, and host-only (no Domain).
+        The same-origin proxy preserves Set-Cookie and never caches this
+        response. After logout obtain a new token before another unsafe request.
+        No token value is returned in the response body or logged.
+      security: []
+      responses:
+        "204":
+          description: CSRF cookie available; no response body
+          headers:
+            Cache-Control:
+              required: true
+              description: The browser and intermediaries must not cache this response
+              schema: { type: string, enum: [no-store] }
+            Set-Cookie:
+              description: >
+                XSRF-TOKEN when a token needs to be created. It need not be
+                reissued when the browser already holds an existing token.
+              schema: { type: string }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
   /auth/login:
     post:
+      parameters:
+      - $ref: '#/components/parameters/XsrfToken'
       operationId: login
       tags: [auth]
       summary: Log in (RF-08, CU-15)
@@ -97,6 +142,8 @@ paths:
 
   /auth/logout:
     post:
+      parameters:
+      - $ref: '#/components/parameters/XsrfToken'
       operationId: logout
       tags: [auth]
       summary: Log out
@@ -105,6 +152,7 @@ paths:
         "204": { description: "Session closed, cookie invalidated" }
         "401": { $ref: "#/components/responses/NoSession" }
 
+        "403": { $ref: "#/components/responses/CsrfInvalid" }
   /auth/me:
     get:
       operationId: getCurrentUser
@@ -123,6 +171,8 @@ paths:
 
   /auth/activate:
     post:
+      parameters:
+      - $ref: '#/components/parameters/XsrfToken'
       operationId: activateAccess
       tags: [auth]
       summary: Activate access with the single-use link and choose the password (RF-11, RF-12, CU-24)
@@ -173,6 +223,8 @@ paths:
 
   /auth/change-password:
     post:
+      parameters:
+      - $ref: '#/components/parameters/XsrfToken'
       operationId: changePassword
       tags: [auth]
       summary: Change password — mandatory on first login (RF-12)
@@ -207,17 +259,21 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "401": { $ref: "#/components/responses/NoSession" }
-        "403":
-          description: >
-            `AUTH_INVALID_CREDENTIALS` with `field: currentPassword` when the current password is
-            wrong (A0.6, as in the re-authentication of the administrators, TAR-127)
+        '403':
+          description: '`AUTH_INVALID_CREDENTIALS` with `field: currentPassword` when the current password is
+            wrong (A0.6, as in the re-authentication of the administrators, TAR-127). AUTH_CSRF_INVALID when the
+            CSRF cookie/header pair is missing or invalid. This check can reject the request before authentication
+            or business validation; a valid token does not replace authorization.'
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Error" }
+              schema:
+                $ref: '#/components/schemas/Error'
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /auth/forgot-password:
     post:
+      parameters:
+      - $ref: '#/components/parameters/XsrfToken'
       operationId: requestPasswordReset
       tags: [auth]
       summary: Request password recovery (RF-16)
@@ -241,8 +297,11 @@ paths:
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
+        "403": { $ref: "#/components/responses/CsrfInvalid" }
   /auth/reset-password:
     post:
+      parameters:
+      - $ref: '#/components/parameters/XsrfToken'
       operationId: resetPassword
       tags: [auth]
       summary: Reset password with a single-use code (RF-16)
@@ -284,6 +343,7 @@ paths:
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
   # ───────────────────────── ADMIN: ENVIRONMENTS (RF-01, RF-13, CU-01, CU-10) ─────────────────────────
+        "403": { $ref: "#/components/responses/CsrfInvalid" }
   /admin/environments:
     get:
       operationId: listEnvironments
@@ -322,6 +382,8 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
     post:
+      parameters:
+      - $ref: '#/components/parameters/XsrfToken'
       operationId: createEnvironment
       tags: [admin-environments]
       summary: Create environment (RF-01, CU-01)
@@ -373,7 +435,9 @@ paths:
       summary: Edit environment
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
-      parameters: [{ $ref: "#/components/parameters/Id" }]
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/XsrfToken'
       requestBody:
         required: true
         content:
@@ -422,7 +486,9 @@ paths:
       summary: Soft-deactivate environment (RF-13, RN-12, CU-10)
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
-      parameters: [{ $ref: "#/components/parameters/Id" }]
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/XsrfToken'
       responses:
         "204": { description: "Environment deactivated, history preserved; deactivating an inactive one changes nothing" }
         "401": { $ref: "#/components/responses/NoSession" }
@@ -447,7 +513,9 @@ paths:
       summary: Reactivate a previously deactivated environment (RN-12)
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
-      parameters: [{ $ref: "#/components/parameters/Id" }]
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/XsrfToken'
       responses:
         "204": { description: "Environment reactivated, visible in active listings again; reactivating an active one changes nothing" }
         "401": { $ref: "#/components/responses/NoSession" }
@@ -526,6 +594,8 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
     post:
+      parameters:
+      - $ref: '#/components/parameters/XsrfToken'
       operationId: createAdministrator
       tags: [admin-administrators]
       summary: An administrator creates another administrator (RF-22, CU-30)
@@ -553,14 +623,16 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/AdministratorCreated" } } }
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
-        "403":
-          description: >-
-            Not an administrator (`AUTH_FORBIDDEN`), the session still has the password change
-            pending (`AUTH_PASSWORD_CHANGE_REQUIRED`), or `currentPassword` is wrong (`AUTH_INVALID_CREDENTIALS` with
-            `field: currentPassword`)
+        '403':
+          description: 'Not an administrator (`AUTH_FORBIDDEN`), the session still has the password change pending
+            (`AUTH_PASSWORD_CHANGE_REQUIRED`), or `currentPassword` is wrong (`AUTH_INVALID_CREDENTIALS` with
+            `field: currentPassword`). AUTH_CSRF_INVALID when the CSRF cookie/header pair is missing or invalid.
+            This check can reject the request before authentication or business validation; a valid token does
+            not replace authorization.'
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Error" }
+              schema:
+                $ref: '#/components/schemas/Error'
         "409":
           description: >-
             `ACCOUNT_DOCUMENT_TAKEN` (the document already belongs to an account, administrator or
@@ -589,7 +661,9 @@ paths:
         (best-effort). Its own rate limit: 3 requests per minute per session user.
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
-      parameters: [{ $ref: "#/components/parameters/Id" }]
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/XsrfToken'
       requestBody:
         required: true
         content:
@@ -599,14 +673,16 @@ paths:
         "204": { description: "Administrator deactivated; deactivating an inactive one changes nothing" }
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
-        "403":
-          description: >-
-            Not an administrator (`AUTH_FORBIDDEN`), the session still has the password change
-            pending (`AUTH_PASSWORD_CHANGE_REQUIRED`), or `currentPassword` is wrong (`AUTH_INVALID_CREDENTIALS` with
-            `field: currentPassword`)
+        '403':
+          description: 'Not an administrator (`AUTH_FORBIDDEN`), the session still has the password change pending
+            (`AUTH_PASSWORD_CHANGE_REQUIRED`), or `currentPassword` is wrong (`AUTH_INVALID_CREDENTIALS` with
+            `field: currentPassword`). AUTH_CSRF_INVALID when the CSRF cookie/header pair is missing or invalid.
+            This check can reject the request before authentication or business validation; a valid token does
+            not replace authorization.'
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Error" }
+              schema:
+                $ref: '#/components/schemas/Error'
         "404": { $ref: "#/components/responses/AdministratorNotFound" }
         "409":
           description: >-
@@ -635,7 +711,9 @@ paths:
         by email (best-effort). Its own rate limit: 3 requests per minute per session user.
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
-      parameters: [{ $ref: "#/components/parameters/Id" }]
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/XsrfToken'
       requestBody:
         required: true
         content:
@@ -645,14 +723,16 @@ paths:
         "204": { description: "Administrator reactivated; reactivating an active one changes nothing" }
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
-        "403":
-          description: >-
-            Not an administrator (`AUTH_FORBIDDEN`), the session still has the password change
-            pending (`AUTH_PASSWORD_CHANGE_REQUIRED`), or `currentPassword` is wrong (`AUTH_INVALID_CREDENTIALS` with
-            `field: currentPassword`)
+        '403':
+          description: 'Not an administrator (`AUTH_FORBIDDEN`), the session still has the password change pending
+            (`AUTH_PASSWORD_CHANGE_REQUIRED`), or `currentPassword` is wrong (`AUTH_INVALID_CREDENTIALS` with
+            `field: currentPassword`). AUTH_CSRF_INVALID when the CSRF cookie/header pair is missing or invalid.
+            This check can reject the request before authentication or business validation; a valid token does
+            not replace authorization.'
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Error" }
+              schema:
+                $ref: '#/components/schemas/Error'
         "404": { $ref: "#/components/responses/AdministratorNotFound" }
         "409":
           description: >-
@@ -699,6 +779,8 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
     post:
+      parameters:
+      - $ref: '#/components/parameters/XsrfToken'
       operationId: createGuest
       tags: [admin-guests]
       summary: Register guest with the minimal data and generate their access (RF-02, RF-11, CU-02, CU-09)
@@ -781,7 +863,9 @@ paths:
         guest alone and are edited through the guest's own endpoints.
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
-      parameters: [{ $ref: "#/components/parameters/Id" }]
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/XsrfToken'
       requestBody:
         content: { application/json: { schema: { $ref: "#/components/schemas/GuestUpdateInput" } } }
       responses:
@@ -826,7 +910,9 @@ paths:
       summary: Soft-deactivate guest — loses login access (RF-13, RN-12, CU-10)
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
-      parameters: [{ $ref: "#/components/parameters/Id" }]
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/XsrfToken'
       responses:
         "204": { description: Guest deactivated }
         "401": { $ref: "#/components/responses/NoSession" }
@@ -855,7 +941,9 @@ paths:
         administrator offers to generate a new access.
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
-      parameters: [{ $ref: "#/components/parameters/Id" }]
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/XsrfToken'
       responses:
         "200":
           description: "Guest reactivated, login access restored"
@@ -906,7 +994,9 @@ paths:
         a stay in the future may be registered while the previous one is still running.
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
-      parameters: [{ $ref: "#/components/parameters/Id" }]
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/XsrfToken'
       requestBody:
         required: true
         content: { application/json: { schema: { $ref: "#/components/schemas/StayInput" } } }
@@ -944,8 +1034,9 @@ paths:
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       parameters:
-        - { $ref: "#/components/parameters/Id" }
-        - { $ref: "#/components/parameters/StayId" }
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/StayId'
+      - $ref: '#/components/parameters/XsrfToken'
       requestBody:
         required: true
         content: { application/json: { schema: { $ref: "#/components/schemas/StayUpdateInput" } } }
@@ -985,7 +1076,9 @@ paths:
         The guest must not be inactive.
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
-      parameters: [{ $ref: "#/components/parameters/Id" }]
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/XsrfToken'
       requestBody:
         required: true
         content:
@@ -1028,7 +1121,9 @@ paths:
         (`Cache-Control: no-store`).
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
-      parameters: [{ $ref: "#/components/parameters/Id" }]
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/XsrfToken'
       requestBody:
         required: true
         content:
@@ -1126,8 +1221,9 @@ paths:
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       parameters:
-        - { $ref: "#/components/parameters/Id" }
-        - { $ref: "#/components/parameters/DocumentId" }
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/DocumentId'
+      - $ref: '#/components/parameters/XsrfToken'
       requestBody:
         required: true
         content:
@@ -1200,8 +1296,9 @@ paths:
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       parameters:
-        - { $ref: "#/components/parameters/Id" }
-        - { $ref: "#/components/parameters/DocumentId" }
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/DocumentId'
+      - $ref: '#/components/parameters/XsrfToken'
       requestBody:
         required: true
         content: { application/json: { schema: { $ref: "#/components/schemas/DocumentActionRequest" } } }
@@ -1364,6 +1461,8 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
     post:
+      parameters:
+      - $ref: '#/components/parameters/XsrfToken'
       operationId: createContract
       tags: [admin-contracts]
       summary: Upload contract (RF-03, CU-03)
@@ -1449,7 +1548,9 @@ paths:
       description: Idempotent — a contract that is already terminated or expired answers 204 and stays as it is
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
-      parameters: [{ $ref: "#/components/parameters/Id" }]
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/XsrfToken'
       responses:
         "204": { description: Contract terminated }
         "401": { $ref: "#/components/responses/NoSession" }
@@ -1585,6 +1686,8 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
     post:
+      parameters:
+      - $ref: '#/components/parameters/XsrfToken'
       operationId: createDirectPayment
       tags: [admin-payments]
       summary: >
@@ -1680,7 +1783,9 @@ paths:
         The reviewer is recorded and shown in the administrator's views (TAR-230).
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
-      parameters: [{ $ref: "#/components/parameters/Id" }]
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/XsrfToken'
       requestBody:
         required: true
         content:
@@ -1748,7 +1853,9 @@ paths:
         read: over the limit the answer is 429 `RATE_LIMITED` with a `Retry-After` header.
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
-      parameters: [{ $ref: "#/components/parameters/Id" }]
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/XsrfToken'
       requestBody:
         required: true
         content:
@@ -1804,6 +1911,8 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
     post:
+      parameters:
+      - $ref: '#/components/parameters/XsrfToken'
       operationId: createExpense
       tags: [admin-expenses]
       summary: Register expense (RF-07)
@@ -1832,7 +1941,9 @@ paths:
       summary: Edit expense — replaces its category, amount, month and description; no audit restriction (RN-24)
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
-      parameters: [{ $ref: "#/components/parameters/Id" }]
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/XsrfToken'
       requestBody:
         required: true
         content: { application/json: { schema: { $ref: "#/components/schemas/ExpenseUpdateInput" } } }
@@ -1852,7 +1963,9 @@ paths:
       summary: Delete expense — no audit restriction (RN-24)
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
-      parameters: [{ $ref: "#/components/parameters/Id" }]
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/XsrfToken'
       responses:
         "204": { description: Expense deleted for good (RN-24) }
         "401": { $ref: "#/components/responses/NoSession" }
@@ -1887,6 +2000,8 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
     post:
+      parameters:
+      - $ref: '#/components/parameters/XsrfToken'
       operationId: createFine
       tags: [admin-fines]
       summary: Register fine as income against a guest (RF-19, RN-30)
@@ -1929,7 +2044,9 @@ paths:
         edit operation; to correct a fine, delete it and create it again (RF-19, RN-30).
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
-      parameters: [{ $ref: "#/components/parameters/Id" }]
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/XsrfToken'
       responses:
         "204": { description: Fine deleted for good (RN-24) }
         "401": { $ref: "#/components/responses/NoSession" }
@@ -1964,6 +2081,8 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
     post:
+      parameters:
+      - $ref: '#/components/parameters/XsrfToken'
       operationId: createRefund
       tags: [admin-refunds]
       summary: Register a refund of Quipu to a guest (RF-24, RN-39, A6.5)
@@ -2114,6 +2233,8 @@ paths:
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/GuestAccessDenied" }
     post:
+      parameters:
+      - $ref: '#/components/parameters/XsrfToken'
       operationId: uploadPaymentVoucher
       tags: [guest]
       summary: Send the payment of a month with one or more proofs (RF-04, CU-17, H3, RN-22)
@@ -2142,20 +2263,32 @@ paths:
             `proofs[i].fileIndex`)
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "401": { $ref: "#/components/responses/NoSession" }
-        "403":
-          description: >
-            `VOUCHER_NO_ACTIVE_CONTRACT` (no active contract, RN-27),
-            `AUTH_ONBOARDING_REQUIRED` (the onboarding is not complete, RN-33),
-            `AUTH_PASSWORD_CHANGE_REQUIRED` (temporary password not changed,
-            RF-12) or `AUTH_FORBIDDEN` (a guest of the other type, RN-09). On the multipart upload, `AUTH_FORBIDDEN` is also returned when the request carries neither an `Origin` header nor `Sec-Fetch-Site: same-origin` (ADR-006)
+        '403':
+          description: '`VOUCHER_NO_ACTIVE_CONTRACT` (no active contract, RN-27), `AUTH_ONBOARDING_REQUIRED` (the
+            onboarding is not complete, RN-33), `AUTH_PASSWORD_CHANGE_REQUIRED` (temporary password not changed,
+            RF-12) or `AUTH_FORBIDDEN` (a guest of the other type, RN-09). On the multipart upload, `AUTH_FORBIDDEN`
+            is also returned when the request carries neither an `Origin` header nor `Sec-Fetch-Site: same-origin`
+            (ADR-006). AUTH_CSRF_INVALID when the CSRF cookie/header pair is missing or invalid. This check can
+            reject the request before authentication or business validation; a valid token does not replace authorization.'
           content:
             application/json:
               schema:
                 type: object
-                required: [code, message]
+                required:
+                - code
+                - message
                 properties:
-                  code: { type: string, enum: [VOUCHER_NO_ACTIVE_CONTRACT, AUTH_ONBOARDING_REQUIRED, AUTH_PASSWORD_CHANGE_REQUIRED, AUTH_FORBIDDEN] }
-                  message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+                  code:
+                    type: string
+                    enum:
+                    - VOUCHER_NO_ACTIVE_CONTRACT
+                    - AUTH_ONBOARDING_REQUIRED
+                    - AUTH_PASSWORD_CHANGE_REQUIRED
+                    - AUTH_FORBIDDEN
+                    - AUTH_CSRF_INVALID
+                  message:
+                    type: string
+                    description: User-facing message, in Spanish, ready to display in the UI
         "409":
           description: >
             `GUEST_NOT_ACTIVE` (RN-35), `PAYMENT_ALREADY_EXISTS_FOR_PERIOD` (the period is already
@@ -2198,7 +2331,9 @@ paths:
         session user, checked before the files are read.
       security: [{ cookieAuth: [] }]
       x-roles: [GUEST] # guestType CONTRACT
-      parameters: [{ $ref: "#/components/parameters/Id" }]
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/XsrfToken'
       requestBody:
         required: true
         content:
@@ -2248,6 +2383,8 @@ paths:
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/GuestAccessDenied" }
     patch:
+      parameters:
+      - $ref: '#/components/parameters/XsrfToken'
       operationId: updateOwnProfile
       tags: [guest]
       summary: Edit own personal and contact data (CU-20, RN-17)
@@ -2272,6 +2409,8 @@ paths:
   # /guest/** and /temporary-guest/** operation answers 403 AUTH_ONBOARDING_REQUIRED.
   /guest/documents:
     post:
+      parameters:
+      - $ref: '#/components/parameters/XsrfToken'
       operationId: uploadOwnDocument
       tags: [guest]
       summary: Upload one more own document from «Mis datos» after the onboarding (RN-37, TAR-242)
@@ -2304,19 +2443,31 @@ paths:
           description: "`DOCUMENT_INVALID_FILE` (type or size not allowed, RF-15)"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "401": { $ref: "#/components/responses/NoSession" }
-        "403":
-          description: >
-            `AUTH_ONBOARDING_REQUIRED` (the onboarding is not complete, RN-33),
-            `AUTH_PASSWORD_CHANGE_REQUIRED` (temporary password not changed, RF-12) or
-            `AUTH_FORBIDDEN` (a TEMPORARY guest, RN-09). On the multipart upload, `AUTH_FORBIDDEN` is also returned when the request carries neither an `Origin` header nor `Sec-Fetch-Site: same-origin` (ADR-006)
+        '403':
+          description: '`AUTH_ONBOARDING_REQUIRED` (the onboarding is not complete, RN-33), `AUTH_PASSWORD_CHANGE_REQUIRED`
+            (temporary password not changed, RF-12) or `AUTH_FORBIDDEN` (a TEMPORARY guest, RN-09). On the multipart
+            upload, `AUTH_FORBIDDEN` is also returned when the request carries neither an `Origin` header nor
+            `Sec-Fetch-Site: same-origin` (ADR-006). AUTH_CSRF_INVALID when the CSRF cookie/header pair is missing
+            or invalid. This check can reject the request before authentication or business validation; a valid
+            token does not replace authorization.'
           content:
             application/json:
               schema:
                 type: object
-                required: [code, message]
+                required:
+                - code
+                - message
                 properties:
-                  code: { type: string, enum: [AUTH_ONBOARDING_REQUIRED, AUTH_PASSWORD_CHANGE_REQUIRED, AUTH_FORBIDDEN] }
-                  message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+                  code:
+                    type: string
+                    enum:
+                    - AUTH_ONBOARDING_REQUIRED
+                    - AUTH_PASSWORD_CHANGE_REQUIRED
+                    - AUTH_FORBIDDEN
+                    - AUTH_CSRF_INVALID
+                  message:
+                    type: string
+                    description: User-facing message, in Spanish, ready to display in the UI
         "409":
           description: "`DOCUMENT_LIMIT_REACHED` (the guest already has 5 files, RN-37)"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
@@ -2374,6 +2525,8 @@ paths:
 
   /guest/onboarding/personal-data:
     put:
+      parameters:
+      - $ref: '#/components/parameters/XsrfToken'
       operationId: savePersonalData
       tags: [guest-onboarding]
       summary: Save the personal data step (RF-20, CU-25)
@@ -2406,6 +2559,8 @@ paths:
 
   /guest/onboarding/documents:
     post:
+      parameters:
+      - $ref: '#/components/parameters/XsrfToken'
       operationId: uploadOnboardingDocument
       tags: [guest-onboarding]
       summary: Upload one optional document (RN-37, RF-15, CU-25)
@@ -2450,6 +2605,8 @@ paths:
 
   /guest/onboarding/documents/done:
     post:
+      parameters:
+      - $ref: '#/components/parameters/XsrfToken'
       operationId: finishDocumentsStep
       tags: [guest-onboarding]
       summary: Mark the documents step as finished, with files or skipped (RN-37, CU-25)
@@ -2465,6 +2622,8 @@ paths:
 
   /guest/onboarding/consent:
     post:
+      parameters:
+      - $ref: '#/components/parameters/XsrfToken'
       operationId: acceptConsent
       tags: [guest-onboarding]
       summary: Accept the personal data consent — closes the onboarding (RF-14, RN-14, CU-11)
@@ -2513,6 +2672,8 @@ paths:
 
   /temporary-guest/payments:
     post:
+      parameters:
+      - $ref: '#/components/parameters/XsrfToken'
       operationId: uploadTemporaryVoucher
       tags: [temporary-guest]
       summary: >
@@ -2543,20 +2704,32 @@ paths:
             `proofs[i].amount`, `proofs[i].fileIndex`)
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "401": { $ref: "#/components/responses/NoSession" }
-        "403":
-          description: >
-            `VOUCHER_NO_ACTIVE_STAY` (the guest has no stay in force or coming, CU-22),
-            `AUTH_ONBOARDING_REQUIRED` (the onboarding is not complete, RN-33),
-            `AUTH_PASSWORD_CHANGE_REQUIRED` (temporary password not changed, RF-12) or
-            `AUTH_FORBIDDEN` (a guest of the other type, RN-09). On the multipart upload, `AUTH_FORBIDDEN` is also returned when the request carries neither an `Origin` header nor `Sec-Fetch-Site: same-origin` (ADR-006)
+        '403':
+          description: '`VOUCHER_NO_ACTIVE_STAY` (the guest has no stay in force or coming, CU-22), `AUTH_ONBOARDING_REQUIRED`
+            (the onboarding is not complete, RN-33), `AUTH_PASSWORD_CHANGE_REQUIRED` (temporary password not changed,
+            RF-12) or `AUTH_FORBIDDEN` (a guest of the other type, RN-09). On the multipart upload, `AUTH_FORBIDDEN`
+            is also returned when the request carries neither an `Origin` header nor `Sec-Fetch-Site: same-origin`
+            (ADR-006). AUTH_CSRF_INVALID when the CSRF cookie/header pair is missing or invalid. This check can
+            reject the request before authentication or business validation; a valid token does not replace authorization.'
           content:
             application/json:
               schema:
                 type: object
-                required: [code, message]
+                required:
+                - code
+                - message
                 properties:
-                  code: { type: string, enum: [VOUCHER_NO_ACTIVE_STAY, AUTH_ONBOARDING_REQUIRED, AUTH_PASSWORD_CHANGE_REQUIRED, AUTH_FORBIDDEN] }
-                  message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+                  code:
+                    type: string
+                    enum:
+                    - VOUCHER_NO_ACTIVE_STAY
+                    - AUTH_ONBOARDING_REQUIRED
+                    - AUTH_PASSWORD_CHANGE_REQUIRED
+                    - AUTH_FORBIDDEN
+                    - AUTH_CSRF_INVALID
+                  message:
+                    type: string
+                    description: User-facing message, in Spanish, ready to display in the UI
         "409":
           description: >
             `GUEST_NOT_ACTIVE` (RN-35), `PAYMENT_ALREADY_EXISTS_FOR_PERIOD` (the stay is already paid,
@@ -2595,7 +2768,9 @@ paths:
       description: Same rules as `correctOwnPayment`.
       security: [{ cookieAuth: [] }]
       x-roles: [GUEST] # guestType TEMPORARY
-      parameters: [{ $ref: "#/components/parameters/Id" }]
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/XsrfToken'
       requestBody:
         required: true
         content:
@@ -2645,6 +2820,8 @@ paths:
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/GuestAccessDenied" }
     patch:
+      parameters:
+      - $ref: '#/components/parameters/XsrfToken'
       operationId: updateOwnProfileTemporary
       tags: [temporary-guest]
       summary: Edit own personal and contact data (CU-23, RN-17)
@@ -2666,6 +2843,8 @@ paths:
 
   /temporary-guest/documents:
     post:
+      parameters:
+      - $ref: '#/components/parameters/XsrfToken'
       operationId: uploadTemporaryOwnDocument
       tags: [temporary-guest]
       summary: Upload one more own document from «Mis datos» after the onboarding (RN-37, TAR-242)
@@ -2698,19 +2877,31 @@ paths:
           description: "`DOCUMENT_INVALID_FILE` (type or size not allowed, RF-15)"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "401": { $ref: "#/components/responses/NoSession" }
-        "403":
-          description: >
-            `AUTH_ONBOARDING_REQUIRED` (the onboarding is not complete, RN-33),
-            `AUTH_PASSWORD_CHANGE_REQUIRED` (temporary password not changed, RF-12) or
-            `AUTH_FORBIDDEN` (a CONTRACT guest, RN-09). On the multipart upload, `AUTH_FORBIDDEN` is also returned when the request carries neither an `Origin` header nor `Sec-Fetch-Site: same-origin` (ADR-006)
+        '403':
+          description: '`AUTH_ONBOARDING_REQUIRED` (the onboarding is not complete, RN-33), `AUTH_PASSWORD_CHANGE_REQUIRED`
+            (temporary password not changed, RF-12) or `AUTH_FORBIDDEN` (a CONTRACT guest, RN-09). On the multipart
+            upload, `AUTH_FORBIDDEN` is also returned when the request carries neither an `Origin` header nor
+            `Sec-Fetch-Site: same-origin` (ADR-006). AUTH_CSRF_INVALID when the CSRF cookie/header pair is missing
+            or invalid. This check can reject the request before authentication or business validation; a valid
+            token does not replace authorization.'
           content:
             application/json:
               schema:
                 type: object
-                required: [code, message]
+                required:
+                - code
+                - message
                 properties:
-                  code: { type: string, enum: [AUTH_ONBOARDING_REQUIRED, AUTH_PASSWORD_CHANGE_REQUIRED, AUTH_FORBIDDEN] }
-                  message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+                  code:
+                    type: string
+                    enum:
+                    - AUTH_ONBOARDING_REQUIRED
+                    - AUTH_PASSWORD_CHANGE_REQUIRED
+                    - AUTH_FORBIDDEN
+                    - AUTH_CSRF_INVALID
+                  message:
+                    type: string
+                    description: User-facing message, in Spanish, ready to display in the UI
         "409":
           description: "`DOCUMENT_LIMIT_REACHED` (the guest already has 5 files, RN-37)"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
@@ -2756,6 +2947,17 @@ components:
       description: JWT in an HttpOnly cookie, SameSite=Lax; Secure — same site, because Vercel rewrites /bff/* to the backend (RF-08). OpenAPI 3.0 only allows empty scope lists for this scheme, so the role that may call each operation is declared with the `x-roles` extension (ADMIN or GUEST); an operation without it accepts any authenticated session.
 
   parameters:
+    XsrfToken:
+      name: X-XSRF-TOKEN
+      in: header
+      required: true
+      description: CSRF token read from the XSRF-TOKEN cookie by Angular HttpClient. Obtain the cookie via
+        GET /auth/csrf before an unsafe request. Cookie and header must match. Read the current cookie for
+        every request; do not persist or cache the token across authentication transitions. The token does
+        not authenticate the caller.
+      schema:
+        type: string
+        minLength: 1
     Id:
       name: id
       in: path
@@ -2793,6 +2995,13 @@ components:
       schema: { type: string }
 
   responses:
+    CsrfInvalid:
+      description: AUTH_CSRF_INVALID when the CSRF cookie/header pair is missing or invalid. This check can
+        reject the request before authentication or business validation; a valid token does not replace authorization.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CsrfError'
     ValidationFailed:
       description: Invalid input data
       content:
@@ -2804,18 +3013,26 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
     Forbidden:
-      description: >
-        The session is valid but its role cannot use the operation (RN-08, RN-09). On the
-        multipart uploads it is also returned when the request carries neither an `Origin`
-        header nor `Sec-Fetch-Site: same-origin` (ADR-006). The `code` is always `AUTH_FORBIDDEN`
+      description: "The session is valid but its role cannot use the operation (RN-08, RN-09). On the multipart uploads\
+        \ it is also returned when the request carries neither an `Origin` header nor `Sec-Fetch-Site: same-origin`\
+        \ (ADR-006). The `code` is always `AUTH_FORBIDDEN`\n For unsafe requests, AUTH_CSRF_INVALID is also returned\
+        \ when the CSRF cookie/header pair is absent or invalid, before authentication or business validation."
       content:
         application/json:
           schema:
             type: object
-            required: [code, message]
+            required:
+            - code
+            - message
             properties:
-              code: { type: string, enum: [AUTH_FORBIDDEN] }
-              message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+              code:
+                type: string
+                enum:
+                - AUTH_FORBIDDEN
+                - AUTH_CSRF_INVALID
+              message:
+                type: string
+                description: User-facing message, in Spanish, ready to display in the UI
     EnvironmentCodeTaken:
       description: Another environment already has that code (RF-01). The `code` is always `ENVIRONMENT_CODE_TAKEN` and `field` is always `code`
       content:
@@ -2860,10 +3077,12 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
     AccountDisabled:
-      description: Account disabled (RN-12)
+      description: Account disabled (RN-12) For unsafe requests, AUTH_CSRF_INVALID is also returned when the CSRF cookie/header
+        pair is absent or invalid, before authentication or business validation.
       content:
         application/json:
-          schema: { $ref: "#/components/schemas/Error" }
+          schema:
+            $ref: '#/components/schemas/Error'
     AccountLocked:
       description: >
         Account temporarily locked after 5 consecutive failed logins (SEG-06): the lock lasts
@@ -2895,24 +3114,30 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
     OriginCheckForbidden:
-      description: >
-        `AUTH_FORBIDDEN`: the session is not an administrator (RN-08), or the request
-        carries neither an `Origin` header nor `Sec-Fetch-Site: same-origin`, or they
-        name another site (ADR-006). `replaceGuestDocument` is one route of the
-        exact set of multipart routes under that check: `createContract`,
-        `createDirectPayment`, `uploadPaymentVoucher`, `uploadOnboardingDocument`,
-        `uploadTemporaryVoucher`, `uploadOwnDocument`, `uploadTemporaryOwnDocument`, `replaceGuestDocument`, and the corrections of a payment
-        (TAR-239): `correctPaymentByAdmin`, `correctOwnPayment` and `correctOwnPaymentTemporary`. `deleteGuestDocument`
-        is the only JSON route under the same check, because it deletes personal
-        data irreversibly
+      description: "`AUTH_FORBIDDEN`: the session is not an administrator (RN-08), or the request carries neither an\
+        \ `Origin` header nor `Sec-Fetch-Site: same-origin`, or they name another site (ADR-006). `replaceGuestDocument`\
+        \ is one route of the exact set of multipart routes under that check: `createContract`, `createDirectPayment`,\
+        \ `uploadPaymentVoucher`, `uploadOnboardingDocument`, `uploadTemporaryVoucher`, `uploadOwnDocument`, `uploadTemporaryOwnDocument`,\
+        \ `replaceGuestDocument`, and the corrections of a payment (TAR-239): `correctPaymentByAdmin`, `correctOwnPayment`\
+        \ and `correctOwnPaymentTemporary`. `deleteGuestDocument` is the only JSON route under the same check, because\
+        \ it deletes personal data irreversibly\n For unsafe requests, AUTH_CSRF_INVALID is also returned when the CSRF\
+        \ cookie/header pair is absent or invalid, before authentication or business validation."
       content:
         application/json:
           schema:
             type: object
-            required: [code, message]
+            required:
+            - code
+            - message
             properties:
-              code: { type: string, enum: [AUTH_FORBIDDEN] }
-              message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+              code:
+                type: string
+                enum:
+                - AUTH_FORBIDDEN
+                - AUTH_CSRF_INVALID
+              message:
+                type: string
+                description: User-facing message, in Spanish, ready to display in the UI
     AdministratorNotFound:
       description: >-
         The id does not exist or is not an ADMIN account (`ADMIN_NOT_FOUND`); both cases answer the
@@ -2952,36 +3177,54 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/GuestInactiveError" }
     OnboardingAccessDenied:
-      description: >
-        A guest session that cannot use the onboarding operation. The `code` is
-        `AUTH_PASSWORD_CHANGE_REQUIRED` while a temporary password has not been
-        changed (RF-12) or `AUTH_FORBIDDEN` for the administrator. Never
-        `AUTH_ONBOARDING_REQUIRED`: these are the routes an incomplete guest must reach. On the multipart upload, `AUTH_FORBIDDEN` is also returned when the request carries neither an `Origin` header nor `Sec-Fetch-Site: same-origin` (ADR-006)
+      description: "A guest session that cannot use the onboarding operation. The `code` is `AUTH_PASSWORD_CHANGE_REQUIRED`\
+        \ while a temporary password has not been changed (RF-12) or `AUTH_FORBIDDEN` for the administrator. Never `AUTH_ONBOARDING_REQUIRED`:\
+        \ these are the routes an incomplete guest must reach. On the multipart upload, `AUTH_FORBIDDEN` is also returned\
+        \ when the request carries neither an `Origin` header nor `Sec-Fetch-Site: same-origin` (ADR-006)\n For unsafe\
+        \ requests, AUTH_CSRF_INVALID is also returned when the CSRF cookie/header pair is absent or invalid, before\
+        \ authentication or business validation."
       content:
         application/json:
           schema:
             type: object
-            required: [code, message]
+            required:
+            - code
+            - message
             properties:
-              code: { type: string, enum: [AUTH_PASSWORD_CHANGE_REQUIRED, AUTH_FORBIDDEN] }
-              message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+              code:
+                type: string
+                enum:
+                - AUTH_PASSWORD_CHANGE_REQUIRED
+                - AUTH_FORBIDDEN
+                - AUTH_CSRF_INVALID
+              message:
+                type: string
+                description: User-facing message, in Spanish, ready to display in the UI
     GuestAccessDenied:
-      description: >
-        The guest session cannot use the operation yet or at all. The `code` is
-        `AUTH_ONBOARDING_REQUIRED` while the onboarding is incomplete (RN-33: the
-        client redirects to the first pending step, `nextStep` of `GET
-        /guest/onboarding`), `AUTH_PASSWORD_CHANGE_REQUIRED` while a temporary
-        password has not been changed (RF-12) and `AUTH_FORBIDDEN` for a guest
-        of the other type (a CONTRACT guest on `/temporary-guest/**` or the
-        reverse, RN-09)
+      description: "The guest session cannot use the operation yet or at all. The `code` is `AUTH_ONBOARDING_REQUIRED`\
+        \ while the onboarding is incomplete (RN-33: the client redirects to the first pending step, `nextStep` of `GET\
+        \ /guest/onboarding`), `AUTH_PASSWORD_CHANGE_REQUIRED` while a temporary password has not been changed (RF-12)\
+        \ and `AUTH_FORBIDDEN` for a guest of the other type (a CONTRACT guest on `/temporary-guest/**` or the reverse,\
+        \ RN-09)\n For unsafe requests, AUTH_CSRF_INVALID is also returned when the CSRF cookie/header pair is absent\
+        \ or invalid, before authentication or business validation."
       content:
         application/json:
           schema:
             type: object
-            required: [code, message]
+            required:
+            - code
+            - message
             properties:
-              code: { type: string, enum: [AUTH_ONBOARDING_REQUIRED, AUTH_PASSWORD_CHANGE_REQUIRED, AUTH_FORBIDDEN] }
-              message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+              code:
+                type: string
+                enum:
+                - AUTH_ONBOARDING_REQUIRED
+                - AUTH_PASSWORD_CHANGE_REQUIRED
+                - AUTH_FORBIDDEN
+                - AUTH_CSRF_INVALID
+              message:
+                type: string
+                description: User-facing message, in Spanish, ready to display in the UI
     OnboardingConflict:
       description: >
         `ONBOARDING_STEP_OUT_OF_ORDER` (a step was attempted before its
@@ -2998,6 +3241,22 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/GuestEmailTakenError" }
   schemas:
+    CsrfError:
+      type: object
+      required:
+      - code
+      - message
+      properties:
+        code:
+          type: string
+          enum:
+          - AUTH_CSRF_INVALID
+        message:
+          type: string
+          description: User-facing message, in Spanish, ready to display in the UI
+      example:
+        code: AUTH_CSRF_INVALID
+        message: No se pudo validar la solicitud. Actualiza la página e inténtalo nuevamente.
     PagedEnvironments:
       type: object
       required: [content, nextCursor, freeCount]
@@ -4385,7 +4644,7 @@ components:
     PaymentQueueItem:
       type: object
       description: A row of the review queue (A5); it does not show the amount
-      required: [id, guestId, guestName, documentNumber, guestType, environmentCode, period, stayStartDate, stayEndDate, status, proofCount, voucherCount, hasCash, submittedAt, createdAt]
+      required: [id, guestId, guestName, documentNumber, guestType, environmentCode, period, stayStartDate, stayEndDate, status, proofCount, voucherCount, hasCash, rejectionReason, reviewedAt, submittedAt, createdAt]
       oneOf:
         - description: A guest with a contract, with its environment and period
           additionalProperties: true
@@ -4414,6 +4673,8 @@ components:
         voucherCount: { type: integer, minimum: 0, maximum: 5, description: "With hasCash, the Comprobantes column («2 vouchers», «1 voucher y efectivo»)" }
         hasCash: { type: boolean }
         reviewedBy: { anyOf: [{ $ref: "#/components/schemas/ReviewerRef" }, { type: object, nullable: true, enum: [null] }], description: "Who resolved it (TAR-230); null while pending" }
+        rejectionReason: { type: string, nullable: true, description: "Reason of the rejection, for the row of the Rechazados view («Motivo: …», TAR-296); null unless the status is REJECTED. It is not sent by mail (D-34d)" }
+        reviewedAt: { type: string, format: date-time, nullable: true, description: "When it was resolved («rechazado hace N días», TAR-296); null while pending" }
         submittedAt: { type: string, format: date-time, description: "Last time it was sent; orders the queue" }
         createdAt: { type: string, format: date-time, description: "When the payment was first sent" }
 
