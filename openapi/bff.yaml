@@ -4733,11 +4733,13 @@ components:
     StayPaymentStatus:
       type: object
       description: Payment status of one stay of a temporary guest (CU-21)
-      required: [stayId, startDate, endDate, status, agreedAmount, surplus]
+      required: [stayId, startDate, endDate, environmentCode, environmentType, status, agreedAmount, surplus]
       properties:
         stayId: { type: string, format: uuid }
         startDate: { type: string, format: date }
         endDate: { type: string, format: date }
+        environmentCode: { type: string, nullable: true, description: "«C1»; with environmentType, «Cabaña C1» (T3). null for an old stay without environment (TAR-237)" }
+        environmentType: { type: string, enum: [ROOM, CABIN], nullable: true, description: "null together with environmentCode" }
         status: { type: string, enum: [PAID, UNDER_REVIEW, UNPAID, OVERDUE], description: "OVERDUE once the exit date has passed without an approved payment" }
         agreedAmount: { type: number }
         paymentId: { type: string, format: uuid, nullable: true }
