@@ -828,17 +828,15 @@ paths:
           description: >
             `GUEST_INACTIVE` (the document belongs to an inactive guest, RN-12, RN-18),
             `GUEST_DOCUMENT_TAKEN` (the document belongs to an administrator account, D-34e) or
-            `GUEST_EMAIL_TAKEN` (the contact email already belongs to another guest, D-33) or
-            `ACCOUNT_EMAIL_TAKEN` (the contact email, case-insensitive, is already the account email of
-            another account, administrator or guest; nothing is created, so the guest never ends up
-            without an account email in silence, RF-02, D-77)
+            `ACCOUNT_EMAIL_TAKEN` (the email, case-insensitive, is already the email of another
+            account, administrator or guest, `field: email`; nothing is created, so the guest never
+            ends up without its email in silence, RF-02, D-77, TAR-349)
           content:
             application/json:
               schema:
                 anyOf:
                   - $ref: "#/components/schemas/GuestInactiveError"
                   - $ref: "#/components/schemas/GuestDocumentTakenError"
-                  - $ref: "#/components/schemas/GuestEmailTakenError"
                   - $ref: "#/components/schemas/AccountEmailTakenError"
 
   /admin/guests/{id}:
@@ -1069,12 +1067,11 @@ paths:
     put:
       operationId: setGuestAccountEmail
       tags: [admin-guests]
-      summary: Set or change the account email of a guest, the one password recovery writes to (RF-16, D-76)
+      summary: Set or change the one email of a guest, the one password recovery writes to (RF-16, TAR-349)
       description: >
-        The account email is the one `requestPasswordReset` writes to; the
-        contact email of the guest (onboarding, profile) stays independent
-        (D-33). The administrator sets it when the guest has none or changes
-        it. Pending password-reset codes of the account stop working, and if
+        The guest has one email, the one of its account, which
+        `requestPasswordReset` writes to (TAR-349). The administrator sets it
+        when the guest has none or changes it, without a verification code. Pending password-reset codes of the account stop working, and if
         the account had another email a notice is sent to it, best-effort.
         The guest must not be inactive.
       security: [{ cookieAuth: [] }]
@@ -2369,11 +2366,11 @@ paths:
     get:
       operationId: getOwnProfile
       tags: [guest]
-      summary: Own personal and contact data, the account email and the uploaded documents (H5, RN-17)
+      summary: Own personal and contact data, the email and the uploaded documents (H5, RN-17)
       description: >
         What H5 «Mis datos» shows before editing: the document, the name and contact data the
-        guest keeps (RN-17), the account email where the password recovery link goes (read-only:
-        only the administration changes it, A3.9) and the documents uploaded during the onboarding
+        guest keeps (RN-17), its one email, where the password recovery link goes, with the new one
+        waiting for its code if any (TAR-349), and the documents uploaded during the onboarding
         or later (RN-37, `uploadOwnDocument`), without links: each one opens with `getOwnDocument` (TAR-241). Never cacheable.
       security: [{ cookieAuth: [] }]
       x-roles: [GUEST] # guestType CONTRACT
@@ -2404,12 +2401,67 @@ paths:
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/GuestAccessDenied" }
-        "409": { $ref: "#/components/responses/GuestEmailTaken" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
   # ───────────────────────── GUEST ONBOARDING (RF-14, RF-20, CU-11, CU-24..26) ─────────────────────────
   # Open to a GUEST of either type. Until the onboarding is complete every other
   # /guest/** and /temporary-guest/** operation answers 403 AUTH_ONBOARDING_REQUIRED.
+  /guest/email-verification:
+    post:
+      parameters:
+      - $ref: '#/components/parameters/XsrfToken'
+      operationId: requestOwnEmailVerification
+      tags: [guest]
+      summary: Send a code to a new email of the guest (TAR-349)
+      description: >
+        For an active contract guest (H5); a guest still onboarding uses `requestOnboardingEmailVerification`. The code (6 digits) goes to the new email and lives 10 minutes; the
+        current email stays until the code is confirmed. A new request replaces the
+        pending one and its code, and waits 60 seconds since the last code was sent.
+        Never cacheable.
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType CONTRACT
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/EmailVerificationInput" } } }
+      responses:
+        "202":
+          description: Code sent; the email is pending until its code is confirmed
+          headers:
+            Cache-Control: { required: true, schema: { type: string, enum: ["no-store"] } }
+        "400": { $ref: "#/components/responses/EmailVerificationRefused" }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/GuestAccessDenied" }
+        "409": { $ref: "#/components/responses/AccountEmailTaken" }
+        "429": { $ref: "#/components/responses/EmailVerificationCooldown" }
+
+  /guest/email-verification/confirm:
+    post:
+      parameters:
+      - $ref: '#/components/parameters/XsrfToken'
+      operationId: confirmOwnEmailVerification
+      tags: [guest]
+      summary: Confirm the code and make the pending email the guest's email (TAR-349)
+      description: >
+        With the right code the pending email becomes the one email of the guest (the
+        account email, where the password recovery goes): a pending password-reset code
+        stops working, the sessions stay open, and the previous email, if any, receives a
+        notice, best-effort. 5 wrong codes end the pending request.
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType CONTRACT
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/EmailVerificationConfirmation" } } }
+      responses:
+        "204":
+          description: Email changed
+          headers:
+            Cache-Control: { required: true, schema: { type: string, enum: ["no-store"] } }
+        "400": { $ref: "#/components/responses/EmailVerificationRefused" }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/GuestAccessDenied" }
+        "409": { $ref: "#/components/responses/AccountEmailTaken" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
   /guest/documents:
     post:
       parameters:
@@ -2536,6 +2588,8 @@ paths:
       description: >
         Requires the password step to be done (RN-33). Only while the guest is
         in onboarding; afterwards the data is edited through the profile endpoint.
+        The email is not part of this step: it changes only by verifying the new
+        one (`requestOnboardingEmailVerification`, TAR-349).
       security: [{ cookieAuth: [] }]
       x-roles: [GUEST] # either guestType
       requestBody:
@@ -2548,17 +2602,63 @@ paths:
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/OnboardingAccessDenied" }
-        "409":
-          description: >
-            An onboarding-state conflict (`ONBOARDING_STEP_OUT_OF_ORDER`, `ONBOARDING_ALREADY_COMPLETED`,
-            see the `OnboardingConflict` response) or `GUEST_EMAIL_TAKEN` (the contact email
-            already belongs to another guest, D-33)
-          content:
-            application/json:
-              schema:
-                anyOf:
-                  - $ref: "#/components/schemas/OnboardingConflictError"
-                  - $ref: "#/components/schemas/GuestEmailTakenError"
+        "409": { $ref: "#/components/responses/OnboardingConflict" }
+
+  /guest/onboarding/email-verification:
+    post:
+      parameters:
+      - $ref: '#/components/parameters/XsrfToken'
+      operationId: requestOnboardingEmailVerification
+      tags: [guest-onboarding]
+      summary: Send a code to a new email of the guest (TAR-349)
+      description: >
+        During the onboarding (O1), for a guest of either type. The code (6 digits) goes to the new email and lives 10 minutes; the
+        current email stays until the code is confirmed. A new request replaces the
+        pending one and its code, and waits 60 seconds since the last code was sent.
+        Never cacheable.
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # either guestType
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/EmailVerificationInput" } } }
+      responses:
+        "202":
+          description: Code sent; the email is pending until its code is confirmed
+          headers:
+            Cache-Control: { required: true, schema: { type: string, enum: ["no-store"] } }
+        "400": { $ref: "#/components/responses/EmailVerificationRefused" }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/OnboardingAccessDenied" }
+        "409": { $ref: "#/components/responses/AccountEmailTaken" }
+        "429": { $ref: "#/components/responses/EmailVerificationCooldown" }
+
+  /guest/onboarding/email-verification/confirm:
+    post:
+      parameters:
+      - $ref: '#/components/parameters/XsrfToken'
+      operationId: confirmOnboardingEmailVerification
+      tags: [guest-onboarding]
+      summary: Confirm the code and make the pending email the guest's email (TAR-349)
+      description: >
+        With the right code the pending email becomes the one email of the guest (the
+        account email, where the password recovery goes): a pending password-reset code
+        stops working, the sessions stay open, and the previous email, if any, receives a
+        notice, best-effort. 5 wrong codes end the pending request.
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # either guestType
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/EmailVerificationConfirmation" } } }
+      responses:
+        "204":
+          description: Email changed
+          headers:
+            Cache-Control: { required: true, schema: { type: string, enum: ["no-store"] } }
+        "400": { $ref: "#/components/responses/EmailVerificationRefused" }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/OnboardingAccessDenied" }
+        "409": { $ref: "#/components/responses/AccountEmailTaken" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /guest/onboarding/documents:
     post:
@@ -2806,11 +2906,11 @@ paths:
     get:
       operationId: getOwnProfileTemporary
       tags: [temporary-guest]
-      summary: Own personal and contact data, the account email and the uploaded documents (T3, RN-17)
+      summary: Own personal and contact data, the email and the uploaded documents (T3, RN-17)
       description: >
         What T3 «Mis datos» shows before editing: the document, the name and contact data the
-        guest keeps (RN-17), the account email where the password recovery link goes (read-only:
-        only the administration changes it, A3.9) and the documents uploaded during the onboarding
+        guest keeps (RN-17), its one email, where the password recovery link goes, with the new one
+        waiting for its code if any (TAR-349), and the documents uploaded during the onboarding
         or later (RN-37, `uploadTemporaryOwnDocument`), without links: each one opens with `getTemporaryOwnDocument` (TAR-241). Never cacheable.
       security: [{ cookieAuth: [] }]
       x-roles: [GUEST] # guestType TEMPORARY
@@ -2841,7 +2941,62 @@ paths:
         "400": { $ref: "#/components/responses/ValidationFailed" }
         "401": { $ref: "#/components/responses/NoSession" }
         "403": { $ref: "#/components/responses/GuestAccessDenied" }
-        "409": { $ref: "#/components/responses/GuestEmailTaken" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /temporary-guest/email-verification:
+    post:
+      parameters:
+      - $ref: '#/components/parameters/XsrfToken'
+      operationId: requestOwnTemporaryEmailVerification
+      tags: [temporary-guest]
+      summary: Send a code to a new email of the guest (TAR-349)
+      description: >
+        For an active temporary guest (T3); a guest still onboarding uses `requestOnboardingEmailVerification`. The code (6 digits) goes to the new email and lives 10 minutes; the
+        current email stays until the code is confirmed. A new request replaces the
+        pending one and its code, and waits 60 seconds since the last code was sent.
+        Never cacheable.
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType TEMPORARY
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/EmailVerificationInput" } } }
+      responses:
+        "202":
+          description: Code sent; the email is pending until its code is confirmed
+          headers:
+            Cache-Control: { required: true, schema: { type: string, enum: ["no-store"] } }
+        "400": { $ref: "#/components/responses/EmailVerificationRefused" }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/GuestAccessDenied" }
+        "409": { $ref: "#/components/responses/AccountEmailTaken" }
+        "429": { $ref: "#/components/responses/EmailVerificationCooldown" }
+
+  /temporary-guest/email-verification/confirm:
+    post:
+      parameters:
+      - $ref: '#/components/parameters/XsrfToken'
+      operationId: confirmOwnTemporaryEmailVerification
+      tags: [temporary-guest]
+      summary: Confirm the code and make the pending email the guest's email (TAR-349)
+      description: >
+        With the right code the pending email becomes the one email of the guest (the
+        account email, where the password recovery goes): a pending password-reset code
+        stops working, the sessions stay open, and the previous email, if any, receives a
+        notice, best-effort. 5 wrong codes end the pending request.
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST] # guestType TEMPORARY
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/EmailVerificationConfirmation" } } }
+      responses:
+        "204":
+          description: Email changed
+          headers:
+            Cache-Control: { required: true, schema: { type: string, enum: ["no-store"] } }
+        "400": { $ref: "#/components/responses/EmailVerificationRefused" }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/GuestAccessDenied" }
+        "409": { $ref: "#/components/responses/AccountEmailTaken" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /temporary-guest/documents:
@@ -3236,13 +3391,39 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/OnboardingConflictError" }
-    GuestEmailTaken:
+    EmailVerificationRefused:
       description: >
-        The contact email already belongs to another guest (D-33). The `code` is always
-        `GUEST_EMAIL_TAKEN` and `field` is `contactEmail`
+        Invalid input (`VALIDATION_ERROR`, `UNKNOWN_FIELD`) or a refused verification (TAR-349):
+        `EMAIL_UNCHANGED` (the email is already the guest's, case-insensitive, `field: email`;
+        nothing is sent), `EMAIL_VERIFICATION_INVALID` (the code does not match, or nothing is
+        pending, `field: code`) or `EMAIL_VERIFICATION_EXPIRED` (the code ran out of its 10 minutes
+        or of its 5 attempts; request a new one, `field: code`)
       content:
         application/json:
-          schema: { $ref: "#/components/schemas/GuestEmailTakenError" }
+          schema:
+            anyOf:
+              - $ref: "#/components/schemas/EmailVerificationError"
+              - $ref: "#/components/schemas/Error"
+    EmailVerificationCooldown:
+      description: >
+        `EMAIL_VERIFICATION_COOLDOWN`: a code was sent less than 60 seconds ago (TAR-349), or
+        `RATE_LIMITED` by the address limit (SEC-01). The wait is in `Retry-After` and, for the
+        cooldown, also in `retryAfterSeconds`
+      headers:
+        Retry-After:
+          description: Seconds until the client may retry
+          schema: { type: integer, minimum: 1 }
+      content:
+        application/json:
+          schema:
+            anyOf:
+              - $ref: "#/components/schemas/EmailVerificationCooldownError"
+              - $ref: "#/components/schemas/Error"
+    AccountEmailTaken:
+      description: "`ACCOUNT_EMAIL_TAKEN`: the email, case-insensitive, already belongs to another account, administrator or guest (`field: email`)"
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/AccountEmailTakenError" }
   schemas:
     CsrfError:
       type: object
@@ -3368,21 +3549,47 @@ components:
 
     AccountEmailTakenError:
       type: object
-      description: The email is already the account email of another account, administrator or guest (a guest contact email is not an account email, D-33)
+      description: The email is already the email of another account, administrator or guest; a guest has one email, the one of its account (TAR-349)
       required: [code, message, field]
       properties:
         code: { type: string, enum: [ACCOUNT_EMAIL_TAKEN] }
         message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
-        field: { type: string, enum: [contactEmail, email] }
+        field: { type: string, enum: [email] }
 
-    GuestEmailTakenError:
+    EmailVerificationError:
       type: object
-      description: The contact email already belongs to another guest (D-33); the account email is independent
+      description: A refused email verification (TAR-349); `field` is the input to mark
       required: [code, message, field]
       properties:
-        code: { type: string, enum: [GUEST_EMAIL_TAKEN] }
+        code: { type: string, enum: [EMAIL_UNCHANGED, EMAIL_VERIFICATION_INVALID, EMAIL_VERIFICATION_EXPIRED] }
         message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
-        field: { type: string, enum: [contactEmail] }
+        field: { type: string, enum: [email, code] }
+
+    EmailVerificationCooldownError:
+      type: object
+      description: Another code was asked for before 60 seconds since the last one (TAR-349)
+      required: [code, message, field, retryAfterSeconds]
+      properties:
+        code: { type: string, enum: [EMAIL_VERIFICATION_COOLDOWN] }
+        message: { type: string, description: "User-facing message, in Spanish, ready to display in the UI" }
+        field: { type: string, enum: [email] }
+        retryAfterSeconds: { type: integer, minimum: 1, maximum: 60, description: "The same value as Retry-After, readable without exposing the header across origins" }
+
+    EmailVerificationInput:
+      type: object
+      description: The new email of the guest; a code is sent there (TAR-349)
+      required: [email]
+      additionalProperties: false
+      properties:
+        email: { type: string, format: email, minLength: 3, maxLength: 200 }
+
+    EmailVerificationConfirmation:
+      type: object
+      description: The six digits sent to the new email (TAR-349)
+      required: [code]
+      additionalProperties: false
+      properties:
+        code: { type: string, pattern: "^[0-9]{6}$" }
 
     GuestHasActiveContractError:
       type: object
@@ -3707,7 +3914,7 @@ components:
         documentNumber: { type: string, minLength: 1, maxLength: 20, pattern: "^[A-Za-z0-9-]{1,20}$", description: "A DNI is exactly 8 digits; a CE or a passport, letters, digits or hyphen. A DNI with another shape is 400 VALIDATION_ERROR with field documentNumber (TAR-237)" }
         type: { type: string, enum: [CONTRACT, TEMPORARY] }
         phone: { type: string, maxLength: 30, pattern: "^\\+?[0-9][0-9 -]{5,28}$", description: "Optional, to notify the guest: digits, spaces and hyphens, with an optional + prefix" }
-        contactEmail: { type: string, format: email, maxLength: 200, description: "Optional: if present the access (the link or the temporary password, depending on accessMode) is also sent by email (RN-19)" }
+        email: { type: string, format: email, maxLength: 200, description: "Optional: the one email of the guest, the email of its account (D-77, TAR-349). If present the access (the link or the temporary password, depending on accessMode) is also sent there (RN-19)" }
         accessMode: { $ref: "#/components/schemas/AccessMode" }
 
     GuestCreated:
@@ -3783,24 +3990,37 @@ components:
 
     PersonalDataInput:
       type: object
-      description: Personal data step of the onboarding (RN-33)
+      description: Personal data step of the onboarding (RN-33). The email is not here; it changes only by verifying it (TAR-349)
       required: [name, phone]
+      additionalProperties: false
       properties:
         name: { type: string, minLength: 1, maxLength: 200 }
         phone: { type: string, minLength: 1, maxLength: 30 }
-        contactEmail: { type: string, format: email, maxLength: 200, description: "Optional contact email, independent of the account email used to recover the password (D-76, RF-16, A3.9)" }
+        emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
+
+    PersonalData:
+      type: object
+      description: >
+        The personal data as the onboarding shows them. Before the step is saved `name` and
+        `phone` are empty and `email` is the one of the account, if any (TAR-349)
+      required: [name, phone]
+      properties:
+        name: { type: string, maxLength: 200 }
+        phone: { type: string, maxLength: 30 }
+        email: { type: string, format: email, description: "The one email of the guest, the email of its account; left out when it has none" }
         emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
 
     OwnProfile:
       type: object
       description: The guest's own data for «Mis datos» (H5, T3)
-      required: [documentType, documentNumber, name, phone, contactEmail, emergencyContact, accountEmail, documents, documentsLimit]
+      required: [documentType, documentNumber, name, phone, email, pendingEmail, emergencyContact, documents, documentsLimit]
       properties:
         documentType: { $ref: "#/components/schemas/DocumentType" }
         documentNumber: { type: string }
         name: { type: string }
         phone: { type: string, nullable: true }
-        contactEmail: { type: string, format: email, nullable: true }
+        email: { type: string, format: email, nullable: true, description: "The one email of the guest, the email of its account: where the password recovery goes (RF-16). It changes by verifying the new one (TAR-349). Null when it has none" }
+        pendingEmail: { type: string, format: email, nullable: true, description: "The new email waiting for its code, while the code can still be confirmed (TAR-349); null otherwise" }
         emergencyContact:
           type: object
           nullable: true
@@ -3810,7 +4030,6 @@ components:
             name: { type: string, maxLength: 200 }
             relationship: { type: string, maxLength: 50 }
             phone: { type: string, maxLength: 30 }
-        accountEmail: { type: string, format: email, nullable: true, description: "Where the password recovery link goes (RF-16); read-only for the guest, the administration changes it (A3.9). Null when it has none" }
         documents: { type: array, maxItems: 5, items: { $ref: "#/components/schemas/GuestDocumentRef" } }
         documentsLimit: { type: integer, minimum: 1, description: "How many documents a guest may have (5, RN-37)" }
 
@@ -3818,14 +4037,13 @@ components:
       type: object
       description: >
         The guest edits their own data; every field is optional and an absent field
-        keeps its value (RN-17). The document, the contract and the stays are not
-        editable here.
+        keeps its value (RN-17). The document, the contract, the stays and the email
+        are not editable here: the email changes by verifying it (TAR-349).
       minProperties: 1
       additionalProperties: false
       properties:
         name: { type: string, minLength: 1, maxLength: 200 }
         phone: { type: string, minLength: 1, maxLength: 30 }
-        contactEmail: { type: string, format: email, maxLength: 200 }
         emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
 
     ConsentInput:
@@ -3883,8 +4101,7 @@ components:
         type: { type: string, enum: [CONTRACT, TEMPORARY] }
         hasLoginAccess: { type: boolean }
         phone: { type: string, nullable: true }
-        contactEmail: { type: string, nullable: true }
-        accountEmail: { type: string, nullable: true, description: "Email of the account, for the password recovery (A3.9, PUT …/account-email); independent of the contact email (D-76)" }
+        email: { type: string, nullable: true, description: "The one email of the guest, the email of its account: where the password recovery goes (RF-16). The guest changes it by verifying the new one (TAR-349); the administration sets it with PUT …/account-email without a code (A3.9)" }
         emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
         stayStartDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
         stayEndDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
@@ -3910,8 +4127,7 @@ components:
         type: { type: string, enum: [CONTRACT, TEMPORARY] }
         hasLoginAccess: { type: boolean }
         phone: { type: string, nullable: true }
-        contactEmail: { type: string, nullable: true }
-        accountEmail: { type: string, nullable: true, description: "Email of the account, for the password recovery (A3.9, PUT …/account-email); independent of the contact email (D-76)" }
+        email: { type: string, nullable: true, description: "The one email of the guest, the email of its account: where the password recovery goes (RF-16). The guest changes it by verifying the new one (TAR-349); the administration sets it with PUT …/account-email without a code (A3.9)" }
         emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
         stayStartDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
         stayEndDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
@@ -3937,8 +4153,7 @@ components:
         type: { type: string, enum: [CONTRACT, TEMPORARY] }
         hasLoginAccess: { type: boolean }
         phone: { type: string }
-        contactEmail: { type: string, nullable: true }
-        accountEmail: { type: string, nullable: true, description: "Email of the account, for the password recovery (A3.9, PUT …/account-email); independent of the contact email (D-76)" }
+        email: { type: string, nullable: true, description: "The one email of the guest, the email of its account: where the password recovery goes (RF-16). The guest changes it by verifying the new one (TAR-349); the administration sets it with PUT …/account-email without a code (A3.9)" }
         emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
         stayStartDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
         stayEndDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
@@ -3964,8 +4179,7 @@ components:
         type: { type: string, enum: [CONTRACT, TEMPORARY] }
         hasLoginAccess: { type: boolean }
         phone: { type: string }
-        contactEmail: { type: string, nullable: true }
-        accountEmail: { type: string, nullable: true, description: "Email of the account, for the password recovery (A3.9, PUT …/account-email); independent of the contact email (D-76)" }
+        email: { type: string, nullable: true, description: "The one email of the guest, the email of its account: where the password recovery goes (RF-16). The guest changes it by verifying the new one (TAR-349); the administration sets it with PUT …/account-email without a code (A3.9)" }
         emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
         stayStartDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
         stayEndDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
@@ -3990,8 +4204,7 @@ components:
         type: { type: string, enum: [CONTRACT, TEMPORARY] }
         hasLoginAccess: { type: boolean }
         phone: { type: string, nullable: true }
-        contactEmail: { type: string, nullable: true }
-        accountEmail: { type: string, nullable: true, description: "Email of the account, for the password recovery (A3.9, PUT …/account-email); independent of the contact email (D-76)" }
+        email: { type: string, nullable: true, description: "The one email of the guest, the email of its account: where the password recovery goes (RF-16). The guest changes it by verifying the new one (TAR-349); the administration sets it with PUT …/account-email without a code (A3.9)" }
         emergencyContact: { $ref: "#/components/schemas/EmergencyContact" }
         stayStartDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
         stayEndDate: { type: string, format: date, description: "Deprecated, read-only: taken from the stay in course today, else the next one, else the latest; read the stays at /admin/guests/{id}/stays. Only when type=TEMPORARY", deprecated: true }
@@ -4109,9 +4322,9 @@ components:
 
     OnboardingInProgress:
       description: >
-        Onboarding still open (the password is already chosen). Before the personal
-        data step is saved the data is not there yet; from the documents step on it
-        is always returned.
+        Onboarding still open (the password is already chosen). The personal data are
+        always returned: before the step is saved `name` and `phone` are empty and
+        `email` is the one of the account (TAR-349).
       oneOf:
         - $ref: "#/components/schemas/OnboardingPersonalDataPending"
         - $ref: "#/components/schemas/OnboardingDocumentsPending"
@@ -4119,10 +4332,12 @@ components:
 
     OnboardingPersonalDataPending:
       type: object
-      required: [status, nextStep, documents, consent]
+      required: [status, nextStep, personalData, documents, consent]
       properties:
         status: { type: string, enum: [ONBOARDING] }
         nextStep: { type: string, enum: [PERSONAL_DATA], description: "The password step is already done: a guest that still must change its temporary password cannot reach the onboarding operations (RF-12)" }
+        personalData: { $ref: "#/components/schemas/PersonalData" }
+        pendingEmail: { type: string, format: email, description: "The new email waiting for its code, while the code can still be confirmed (TAR-349); left out when there is none" }
         documents:
           type: array
           maxItems: 5
@@ -4136,7 +4351,8 @@ components:
       properties:
         status: { type: string, enum: [ONBOARDING] }
         nextStep: { type: string, enum: [DOCUMENTS] }
-        personalData: { $ref: "#/components/schemas/PersonalDataInput" }
+        personalData: { $ref: "#/components/schemas/PersonalData" }
+        pendingEmail: { type: string, format: email, description: "The new email waiting for its code, while the code can still be confirmed (TAR-349); left out when there is none" }
         documents:
           type: array
           maxItems: 5
@@ -4150,7 +4366,8 @@ components:
       properties:
         status: { type: string, enum: [ONBOARDING] }
         nextStep: { type: string, enum: [CONSENT] }
-        personalData: { $ref: "#/components/schemas/PersonalDataInput" }
+        personalData: { $ref: "#/components/schemas/PersonalData" }
+        pendingEmail: { type: string, format: email, description: "The new email waiting for its code, while the code can still be confirmed (TAR-349); left out when there is none" }
         documents:
           type: array
           maxItems: 5
@@ -4162,7 +4379,8 @@ components:
       required: [status, personalData, documents, consent]
       properties:
         status: { type: string, enum: [ACTIVE] }
-        personalData: { $ref: "#/components/schemas/PersonalDataInput" }
+        personalData: { $ref: "#/components/schemas/PersonalData" }
+        pendingEmail: { type: string, format: email, description: "The new email waiting for its code, while the code can still be confirmed (TAR-349); left out when there is none" }
         documents:
           type: array
           maxItems: 5
