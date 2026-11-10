@@ -33,6 +33,20 @@ info:
     a possible 401, 400 or 415. These are enforced-mode requirements: deploy
     bootstrap support and the prepared frontend before enabling enforcement
     on all backend nodes.
+    Sessions (TAR-228): login and activation issue two HttpOnly cookies. The
+    access token `sessionToken` (a JWT) lasts 15 minutes and authenticates
+    every call. The refresh token `refreshToken` is opaque, travels only to
+    `/bff/auth` (Path) and renews the session: it expires after 7 days
+    without use and never lasts more than 30 days after the login. When a
+    call answers 401 `AUTH_NO_SESSION`, the client calls POST /auth/refresh
+    once (a single call in flight, shared by every waiting request) and
+    retries the original request once; if the refresh also answers 401, the
+    session is over and the user logs in again. Each refresh rotates the
+    refresh token; presenting one that was already rotated closes that
+    session (theft detection), except within 30 seconds of its rotation,
+    when tabs that share the cookies race. A refresh does not rotate the CSRF
+    cookie. An account may hold several sessions (one per device); logout
+    closes only its own.
   version: "1.0"
   license:
     name: Proprietary - all rights reserved (Tarimat Wasi)
@@ -120,7 +134,7 @@ paths:
                 password: { type: string, maxLength: 128 }
       responses:
         "200":
-          description: "Session started — HttpOnly JWT cookie issued (SameSite=Lax; Secure)"
+          description: "Session started — sets the `sessionToken` (access, 15 minutes) and `refreshToken` HttpOnly cookies (SameSite=Lax; Secure; TAR-228)"
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SessionInfo" }
@@ -147,12 +161,50 @@ paths:
       operationId: logout
       tags: [auth]
       summary: Log out
-      security: [{ cookieAuth: [] }]
+      description: >
+        Closes this session on the server (TAR-228): its refresh token stops
+        working and its access token is refused from then on, even before its
+        15 minutes end. The session is found by the refresh token, so logout
+        also works once the access token has expired. Other sessions of the
+        account stay open.
+      security: [{ refreshCookie: [] }, { cookieAuth: [] }]
       responses:
-        "204": { description: "Session closed, cookie invalidated" }
+        "204": { description: "Session closed; both session cookies and the CSRF cookie expired" }
         "401": { $ref: "#/components/responses/NoSession" }
 
         "403": { $ref: "#/components/responses/CsrfInvalid" }
+  /auth/refresh:
+    post:
+      parameters:
+      - $ref: '#/components/parameters/XsrfToken'
+      operationId: refreshSession
+      tags: [auth]
+      summary: Renew the session with the refresh token (TAR-228)
+      description: >
+        Needs only the `refreshToken` cookie and the CSRF pair, not a live
+        access token. On success it rotates the refresh token and issues a
+        new access token for the same session: ids masked in this session
+        stay valid. Within 30 seconds of a rotation the previous refresh
+        token answers 204 without Set-Cookie, so concurrent tabs keep the
+        cookies another tab just received. Rate limited per client.
+      security: [{ refreshCookie: [] }]
+      responses:
+        "204":
+          description: >
+            Session renewed: Set-Cookie replaces `sessionToken` and
+            `refreshToken` (no Set-Cookie inside the 30 second race window)
+        "401":
+          description: >
+            `AUTH_NO_SESSION`: the refresh token is missing, unknown, expired
+            (7 days without use or 30 days after the login) or revoked; it
+            was already rotated (the session is closed); or the account
+            changed its password or role or was deactivated. The client
+            logs in again
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403": { $ref: "#/components/responses/CsrfInvalid" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
   /auth/me:
     get:
       operationId: getCurrentUser
@@ -198,7 +250,8 @@ paths:
       responses:
         "200":
           description: >
-            Access activated — HttpOnly JWT cookie issued. Always a guest
+            Access activated — sets the `sessionToken` and `refreshToken`
+            cookies, as login does (TAR-228). Always a guest
             session with the password already set: the guest goes on to the
             onboarding (never back to the password step) or, if it was already
             active (administrator-assisted recovery), straight to the home
@@ -232,9 +285,10 @@ paths:
         `currentPassword` is optional only while the session still has the
         password change pending (first login with a temporary password) and
         required otherwise (A0.6, any administrator or guest from the account
-        menu). On success the response sets a fresh `sessionToken` cookie
-        without the pending mark, and every other session of the account stops
-        being valid (decided 2026-11-01). A new password equal to the current
+        menu). On success the response sets fresh `sessionToken` and
+        `refreshToken` cookies without the pending mark for this same session,
+        and every other session of the account is closed, refresh tokens
+        included (decided 2026-11-01, TAR-228). A new password equal to the current
         (or temporary) one is rejected. Rate limited per session user.
       security: [{ cookieAuth: [] }]
       requestBody:
@@ -248,7 +302,7 @@ paths:
                 currentPassword: { type: string, maxLength: 128, description: "Optional when coming from the forced first-login flow" }
                 newPassword: { type: string, minLength: 8, maxLength: 128, description: "At most 72 bytes in UTF-8 (bcrypt limit)" }
       responses:
-        "204": { description: Password updated; Set-Cookie replaces the session }
+        "204": { description: Password updated; Set-Cookie replaces both session cookies }
         "400":
           description: >
             `AUTH_WEAK_PASSWORD` (shorter than 8 characters, longer than 72
@@ -3102,7 +3156,12 @@ components:
       type: apiKey
       in: cookie
       name: sessionToken
-      description: JWT in an HttpOnly cookie, SameSite=Lax; Secure — same site, because Vercel rewrites /bff/* to the backend (RF-08). OpenAPI 3.0 only allows empty scope lists for this scheme, so the role that may call each operation is declared with the `x-roles` extension (ADMIN or GUEST); an operation without it accepts any authenticated session.
+      description: Access JWT in an HttpOnly cookie, SameSite=Lax; Secure, valid 15 minutes (TAR-228) — same site, because Vercel rewrites /bff/* to the backend (RF-08). OpenAPI 3.0 only allows empty scope lists for this scheme, so the role that may call each operation is declared with the `x-roles` extension (ADMIN or GUEST); an operation without it accepts any authenticated session.
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: refreshToken
+      description: Opaque refresh token in an HttpOnly cookie, SameSite=Lax; Secure; Path=/bff/auth, so it only reaches the refresh and logout endpoints (TAR-228). It expires after 7 days without use and 30 days after the login, and is rotated on every refresh.
 
   parameters:
     XsrfToken:
