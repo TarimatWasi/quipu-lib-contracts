@@ -47,13 +47,15 @@ info:
     when tabs that share the cookies race. A refresh does not rotate the CSRF
     cookie. An account may hold several sessions (one per device); logout
     closes only its own.
-  version: "1.0"
+  version: "0.26.0"
   license:
     name: Proprietary - all rights reserved (Tarimat Wasi)
 servers:
   - url: /bff
 
 tags:
+  - name: changes
+    description: Authorized SSE resource invalidation signals (ADR-SSE-01, TAR-370)
   - name: auth
     description: Login, link activation, session and password recovery (RF-08, RF-11, RF-12, RF-16)
   - name: admin-environments
@@ -82,6 +84,127 @@ tags:
     description: Self-service for a guest with a one-time stay (RF-04, RF-06)
 
 paths:
+  /admin/changes/stream:
+    get:
+      operationId: streamAdminChanges
+      tags: [changes]
+      summary: Stream admin resource invalidations (TAR-370)
+      description: >
+        ADR-SSE-01 (TAR-369/TAR-370). UTF-8 SSE byte stream, not a JSON
+        document/array. A blank line terminates a frame. Named events carry JSON
+        data; the media-type x-sse-events map selects its component schema.
+        The first event is ready after subscription registration. Always
+        synchronize visible authorized resources after ready/reconnection,
+        even when epoch/version did not change. Preserve dirty drafts/files;
+        mark edited forms stale instead of rebuilding them. Keep invalidations
+        received during a GET for a subsequent grouped reload. Restart lists
+        from the first page, preserving filters/month. ALL affects mounted,
+        authorized resources only; no background GET fanout or toast per event.
+        No durable delivery, replay, id field or Last-Event-ID recovery.
+        Version gaps do not prove lost changes or order HTTP responses.
+        Server-selected recipients only: no user/session/resource selectors.
+        Resource ids are masked for the receiving session, never the actor.
+        Cookies, role, session/account security version, edge gate and origin
+        are checked before opening. This safe GET does not require CSRF.
+        Idle heartbeats are comments every 20 seconds, with no database query
+        or version increment. Initially four streams per account, 64 globally;
+        one connection per visible browser tab shared by mounted resources.
+        Each frame is at most 8192 UTF-8 bytes; excessive keys/bytes collapse
+        to ALL rather than truncating a frame.
+        Lifetime is min(access-token expiry, opening + 15 minutes). Logout,
+        revocation and security-version changes close affected streams.
+        closing is best-effort; disconnects may happen without it.
+        On access-token-expired or session-updated, close the old EventSource
+        and check/renew through the shared HttpClient refresh path before
+        reopening. session-updated preserves the current sid after password
+        change; other sessions are revoked. session-revoked ends the session.
+        max-duration/server-shutdown may retry. EventSource bypasses HttpClient
+        interceptors and cannot inspect status/headers: close it on error
+        before controlled recovery. A successful /auth/me probe does not prove
+        permission to open this stream. After five consecutive attempts without
+        ready, stop automatic attempts and require an explicit user retry;
+        reset that budget only after ready, not merely the HTTP open event.
+        Network/5xx preserves the session, with
+        capped exponential backoff/jitter (1 to 30 seconds); definitive
+        auth/refresh rejection ends it. A 403 must not create a refresh loop.
+        Respect Retry-After when observable; otherwise wait at least 30 seconds
+        if connection-limit rejection cannot be distinguished. Close when
+        hidden/logout and synchronize on return.
+        Once HTTP 200 is committed, no new status or JSON error replaces the
+        stream: close it, optionally with closing. Existing GETs remain the
+        source of truth. No inbox, polling, bus or scheduler is introduced.
+        Administrators only receive keys they are authorized to query.
+        Initial producers are payments/contracts. Expenses, fines, stays,
+        profiles, environments and passage of time do not independently
+        guarantee invalidations in this adoption.
+      security: [{ cookieAuth: [] }]
+      x-roles: [ADMIN]
+      responses:
+        "200": { $ref: "#/components/responses/AdminChangeStream" }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/ChangeStreamForbidden" }
+        "429": { $ref: "#/components/responses/ChangeStreamLimited" }
+
+  /guest/changes/stream:
+    get:
+      operationId: streamGuestChanges
+      tags: [changes]
+      summary: Stream guest resource invalidations (TAR-370)
+      description: >
+        ADR-SSE-01 (TAR-369/TAR-370). UTF-8 SSE byte stream, not a JSON
+        document/array. A blank line terminates a frame. Named events carry JSON
+        data; the media-type x-sse-events map selects its component schema.
+        The first event is ready after subscription registration. Always
+        synchronize visible authorized resources after ready/reconnection,
+        even when epoch/version did not change. Preserve dirty drafts/files;
+        mark edited forms stale instead of rebuilding them. Keep invalidations
+        received during a GET for a subsequent grouped reload. Restart lists
+        from the first page, preserving filters/month. ALL affects mounted,
+        authorized resources only; no background GET fanout or toast per event.
+        No durable delivery, replay, id field or Last-Event-ID recovery.
+        Version gaps do not prove lost changes or order HTTP responses.
+        Server-selected recipients only: no user/session/resource selectors.
+        Resource ids are masked for the receiving session, never the actor.
+        Cookies, role, session/account security version, edge gate and origin
+        are checked before opening. This safe GET does not require CSRF.
+        Idle heartbeats are comments every 20 seconds, with no database query
+        or version increment. Initially four streams per account, 64 globally;
+        one connection per visible browser tab shared by mounted resources.
+        Each frame is at most 8192 UTF-8 bytes; excessive keys/bytes collapse
+        to ALL rather than truncating a frame.
+        Lifetime is min(access-token expiry, opening + 15 minutes). Logout,
+        revocation and security-version changes close affected streams.
+        closing is best-effort; disconnects may happen without it.
+        On access-token-expired or session-updated, close the old EventSource
+        and check/renew through the shared HttpClient refresh path before
+        reopening. session-updated preserves the current sid after password
+        change; other sessions are revoked. session-revoked ends the session.
+        max-duration/server-shutdown may retry. EventSource bypasses HttpClient
+        interceptors and cannot inspect status/headers: close it on error
+        before controlled recovery. A successful /auth/me probe does not prove
+        permission to open this stream. After five consecutive attempts without
+        ready, stop automatic attempts and require an explicit user retry;
+        reset that budget only after ready, not merely the HTTP open event.
+        Network/5xx preserves the session, with
+        capped exponential backoff/jitter (1 to 30 seconds); definitive
+        auth/refresh rejection ends it. A 403 must not create a refresh loop.
+        Respect Retry-After when observable; otherwise wait at least 30 seconds
+        if connection-limit rejection cannot be distinguished. Close when
+        hidden/logout and synchronize on return.
+        Once HTTP 200 is committed, no new status or JSON error replaces the
+        stream: close it, optionally with closing. Existing GETs remain the
+        source of truth. No inbox, polling, bus or scheduler is introduced.
+        Both CONTRACT and TEMPORARY guests use this endpoint. guest.stay is
+        the temporary guest payment-status resource; guest.payment:<id> uses
+        the own detail route for either guest type. A session required to
+        change its temporary password cannot open the stream.
+      security: [{ cookieAuth: [] }]
+      x-roles: [GUEST]
+      responses:
+        "200": { $ref: "#/components/responses/GuestChangeStream" }
+        "401": { $ref: "#/components/responses/NoSession" }
+        "403": { $ref: "#/components/responses/ChangeStreamForbidden" }
+        "429": { $ref: "#/components/responses/ChangeStreamLimited" }
   # ───────────────────────── AUTH (RF-08, RF-11, RF-12, RF-16, RF-17) ─────────────────────────
   /auth/csrf:
     get:
@@ -3212,6 +3335,125 @@ components:
       schema: { type: string }
 
   responses:
+    AdminChangeStream:
+      description: >
+        Authorized admin invalidations. Ready is first; changed contains only
+        this role's keys. Headers below apply to HTTP 200, not JSON errors
+        sent before opening. Flush complete frames without compression or
+        proxy buffering. Tests must parse UTF-8 SSE framing, including CRLF
+        and split chunks, join data lines, ignore comments, JSON-parse data
+        and validate it against the event's x-sse-events dataSchema below.
+        Generic OpenAPI validation of the response string is insufficient.
+        Also assert ready-first, role isolation, frame byte limit, heartbeat
+        behavior, nondecreasing versions and closure/lifecycle rules.
+      headers:
+        Cache-Control:
+          required: true
+          description: Do not cache or transform this private stream
+          schema: { type: string, enum: ["no-store, no-transform"] }
+        X-Accel-Buffering:
+          required: true
+          description: Disable buffering in proxies that support this header
+          schema: { type: string, enum: ["no"] }
+      content:
+        text/event-stream:
+          schema: { type: string }
+          x-sse-events:
+            ready:
+              dataSchema: { $ref: "#/components/schemas/ChangeReady" }
+            changed:
+              dataSchema: { $ref: "#/components/schemas/AdminChange" }
+            closing:
+              dataSchema: { $ref: "#/components/schemas/ChangeClosing" }
+          example: |
+            event: ready
+            data: {"epoch":"f18a40da-6ddf-4ab4-a75b-f4ad8de2d615","version":0}
+
+            : heartbeat
+
+            event: changed
+            data: {"epoch":"f18a40da-6ddf-4ab4-a75b-f4ad8de2d615","version":2,"invalidate":["admin.dashboard","admin.payments.queue"]}
+
+            event: changed
+            data: {"epoch":"f18a40da-6ddf-4ab4-a75b-f4ad8de2d615","version":5,"invalidate":"ALL"}
+
+            event: closing
+            data: {"reason":"access-token-expired"}
+
+    GuestChangeStream:
+      description: >
+        Authorized guest invalidations. Ready is first; changed contains only
+        this role's keys. Headers below apply to HTTP 200, not JSON errors
+        sent before opening. Flush complete frames without compression or
+        proxy buffering. Tests must parse UTF-8 SSE framing, including CRLF
+        and split chunks, join data lines, ignore comments, JSON-parse data
+        and validate it against the event's x-sse-events dataSchema below.
+        Generic OpenAPI validation of the response string is insufficient.
+        Also assert ready-first, role isolation, frame byte limit, heartbeat
+        behavior, nondecreasing versions and closure/lifecycle rules.
+      headers:
+        Cache-Control:
+          required: true
+          description: Do not cache or transform this private stream
+          schema: { type: string, enum: ["no-store, no-transform"] }
+        X-Accel-Buffering:
+          required: true
+          description: Disable buffering in proxies that support this header
+          schema: { type: string, enum: ["no"] }
+      content:
+        text/event-stream:
+          schema: { type: string }
+          x-sse-events:
+            ready:
+              dataSchema: { $ref: "#/components/schemas/ChangeReady" }
+            changed:
+              dataSchema: { $ref: "#/components/schemas/GuestChange" }
+            closing:
+              dataSchema: { $ref: "#/components/schemas/ChangeClosing" }
+          example: |
+            event: ready
+            data: {"epoch":"f18a40da-6ddf-4ab4-a75b-f4ad8de2d615","version":0}
+
+            : heartbeat
+
+            event: changed
+            data: {"epoch":"f18a40da-6ddf-4ab4-a75b-f4ad8de2d615","version":2,"invalidate":["guest.home","guest.payments"]}
+
+            event: changed
+            data: {"epoch":"f18a40da-6ddf-4ab4-a75b-f4ad8de2d615","version":5,"invalidate":"ALL"}
+
+            event: closing
+            data: {"reason":"access-token-expired"}
+
+    ChangeStreamForbidden:
+      description: >
+        Before opening only. AUTH_FORBIDDEN for wrong role, forbidden origin
+        or failed edge gate; AUTH_PASSWORD_CHANGE_REQUIRED when the session
+        must change its temporary password. Do not refresh-loop on a 403.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [code, message]
+            properties:
+              code: { type: string, enum: [AUTH_FORBIDDEN, AUTH_PASSWORD_CHANGE_REQUIRED] }
+              message: { type: string, description: User-facing message in Spanish }
+    ChangeStreamLimited:
+      description: >
+        Before opening only. RATE_LIMITED for existing request limits or the
+        stream/account/global cap. Connection caps use Retry-After 30 seconds;
+        existing request-limit windows may differ. EventSource cannot inspect
+        status/headers; controlled recovery must avoid reconnect storms and
+        preserve the session.
+      headers:
+        Retry-After:
+          required: true
+          description: Seconds until another connection may be attempted
+          schema: { type: integer, minimum: 1 }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
     CsrfInvalid:
       description: AUTH_CSRF_INVALID when the CSRF cookie/header pair is missing or invalid. This check can
         reject the request before authentication or business validation; a valid token does not replace authorization.
@@ -3484,6 +3726,128 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/AccountEmailTakenError" }
   schemas:
+    ChangeEpoch:
+      type: string
+      format: uuid
+      description: >
+        Random process epoch; changes on restart or before safe-counter
+        exhaustion. Not a session id, database version or durable cursor.
+    ChangeVersion:
+      type: integer
+      minimum: 0
+      maximum: 9007199254740991
+      description: >
+        JavaScript-safe process-wide publication counter. Each recipient sees
+        a monotonic subsequence within an epoch; gaps are allowed. Never order
+        HTTP responses or infer lost events from it. No disconnected-user map
+        or replay is required.
+    ChangeReady:
+      type: object
+      additionalProperties: false
+      required: [epoch, version]
+      properties:
+        epoch: { $ref: "#/components/schemas/ChangeEpoch" }
+        version: { $ref: "#/components/schemas/ChangeVersion" }
+      example:
+        epoch: f18a40da-6ddf-4ab4-a75b-f4ad8de2d615
+        version: 0
+    AdminChangeKey:
+      description: >
+        ADR-SSE-01 administrative groups. admin.guest:<id> groups visible guest
+        detail, history, account-status, payable-periods and stays.
+        admin.contracts groups contract lists/details. admin.environments
+        includes availability filtered by freeFrom/freeTo. admin.environment:<id>
+        groups detail/account-status, the latter only if mounted (no current
+        frontend consumer). No entity data in keys; permission still applies.
+      oneOf:
+        - type: string
+          enum: [admin.dashboard, admin.payments.queue, admin.guests, admin.contracts, admin.environments, admin.finance, admin.credits, admin.refunds]
+        - type: string
+          pattern: '^admin\.(payment|guest|environment):[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+          description: >
+            Id masked for the receiving session. Accept any UUID bit pattern;
+            masked ids are not restricted to UUID version 4.
+    AdminChange:
+      type: object
+      additionalProperties: false
+      required: [epoch, version, invalidate]
+      properties:
+        epoch: { $ref: "#/components/schemas/ChangeEpoch" }
+        version: { $ref: "#/components/schemas/ChangeVersion" }
+        invalidate:
+          description: >
+            Distinct resource keys or literal ALL, never an array containing
+            ALL. Over 64 keys or 8192 UTF-8 frame bytes collapses to ALL.
+            Reload mounted authorized resources only; preserve dirty forms/files.
+          oneOf:
+            - type: string
+              enum: [ALL]
+            - type: array
+              minItems: 1
+              maxItems: 64
+              uniqueItems: true
+              items: { $ref: "#/components/schemas/AdminChangeKey" }
+      example:
+        epoch: f18a40da-6ddf-4ab4-a75b-f4ad8de2d615
+        version: 2
+        invalidate: [admin.dashboard, admin.payments.queue]
+    GuestChangeKey:
+      description: >
+        ADR-SSE-01 own groups. guest.home groups account-status and credit;
+        guest.payments is paginated history; guest.contract is /guest/contract
+        (singular); guest.stay is /temporary-guest/payment-status.
+        guest.payment:<id> is the own payment detail for either guest type.
+      oneOf:
+        - type: string
+          enum: [guest.home, guest.payments, guest.contract, guest.stay]
+        - type: string
+          pattern: '^guest\.payment:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+          description: >
+            Id masked for the receiving session. Accept any UUID bit pattern;
+            masked ids are not restricted to UUID version 4.
+    GuestChange:
+      type: object
+      additionalProperties: false
+      required: [epoch, version, invalidate]
+      properties:
+        epoch: { $ref: "#/components/schemas/ChangeEpoch" }
+        version: { $ref: "#/components/schemas/ChangeVersion" }
+        invalidate:
+          description: >
+            Distinct resource keys or literal ALL, never an array containing
+            ALL. Over 64 keys or 8192 UTF-8 frame bytes collapses to ALL.
+            Reload mounted authorized resources only; preserve dirty forms/files.
+          oneOf:
+            - type: string
+              enum: [ALL]
+            - type: array
+              minItems: 1
+              maxItems: 64
+              uniqueItems: true
+              items: { $ref: "#/components/schemas/GuestChangeKey" }
+      example:
+        epoch: f18a40da-6ddf-4ab4-a75b-f4ad8de2d615
+        version: 2
+        invalidate: [guest.home, guest.payments]
+    ChangeClosing:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          enum:
+            - access-token-expired
+            - session-updated
+            - session-revoked
+            - max-duration
+            - server-shutdown
+          description: >
+            Expiry/session-updated requires session check/renewal before reopening;
+            revoked ends the session. Other reasons may retry with backoff.
+            Absence of closing does not identify a disconnect's cause.
+      example:
+        reason: access-token-expired
     CsrfError:
       type: object
       required:
