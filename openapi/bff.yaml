@@ -134,9 +134,10 @@ paths:
         stream: close it, optionally with closing. Existing GETs remain the
         source of truth. No inbox, polling, bus or scheduler is introduced.
         Administrators only receive keys they are authorized to query.
-        Initial producers are payments/contracts. Expenses, fines, stays,
-        profiles, environments and passage of time do not independently
-        guarantee invalidations in this adoption.
+        Producers cover payments/contracts and, with TAR-376, guest/access,
+        profile/document, stay, environment, expense and fine mutations after
+        commit. Passage of time does not independently emit invalidations.
+        Deploy compatible consumers before enabling new resource keys.
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       responses:
@@ -197,7 +198,10 @@ paths:
         Both CONTRACT and TEMPORARY guests use this endpoint. guest.stay is
         the temporary guest payment-status resource; guest.payment:<id> uses
         the own detail route for either guest type. A session required to
-        change its temporary password cannot open the stream.
+        change its temporary password cannot open the stream. guest.profile
+        invalidates the own profile and document metadata for either guest
+        type; it never carries files, signed URLs or personal data. Deploy
+        compatible consumers before enabling this key (TAR-376).
       security: [{ cookieAuth: [] }]
       x-roles: [GUEST]
       responses:
@@ -3797,9 +3801,13 @@ components:
         guest.payments is paginated history; guest.contract is /guest/contract
         (singular); guest.stay is /temporary-guest/payment-status.
         guest.payment:<id> is the own payment detail for either guest type.
+        guest.profile is /guest/profile or /temporary-guest/profile according
+        to the authenticated guest type, including document metadata. Preserve
+        dirty contact fields and selected files; signal stale data and reload
+        only on explicit choice. It does not imply a notification or file transfer.
       oneOf:
         - type: string
-          enum: [guest.home, guest.payments, guest.contract, guest.stay]
+          enum: [guest.home, guest.payments, guest.contract, guest.stay, guest.profile]
         - type: string
           pattern: '^guest\.payment:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
           description: >
