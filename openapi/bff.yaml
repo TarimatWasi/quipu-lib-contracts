@@ -224,8 +224,8 @@ paths:
         corrected name or label shows corrected. A notification points to the
         resource it is about (`target`), which the client opens with its
         existing GET. The live key `admin.notifications` invalidates this list
-        and the count when a new notification arrives or another tab marks some
-        as read. Retention: 90 days.
+        and the count when a new notification arrives; reading updates the
+        current tab only. Retention: 90 days.
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
       parameters:
@@ -290,8 +290,8 @@ paths:
         corrected name or label shows corrected. A notification points to the
         resource it is about (`target`), which the client opens with its
         existing GET. The live key `guest.notifications` invalidates this list
-        and the count when a new notification arrives or another tab marks some
-        as read. Retention: 90 days.
+        and the count when a new notification arrives; reading updates the
+        current tab only. Retention: 90 days.
       security: [{ cookieAuth: [] }]
       x-roles: [GUEST]
       parameters:
