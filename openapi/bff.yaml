@@ -4045,8 +4045,9 @@ components:
         until a new one is handed); guests receive PAYMENT_APPROVED, PAYMENT_REJECTED,
         REFUND_CREATED, FINE_APPLIED, CONTRACT_SIGNED, CONTRACT_TERMINATED and
         PAYMENT_DUE. Clients show an unknown value with its title and body
-        (forward compatible) instead of failing.
-      enum:
+        (forward compatible) instead of failing: the set grows without a
+        new major version (x-extensible-enum).
+      x-extensible-enum:
         - PAYMENT_PROOF_SUBMITTED
         - ONBOARDING_COMPLETED
         - GUEST_DOCUMENT_UPLOADED
