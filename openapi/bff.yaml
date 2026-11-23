@@ -134,11 +134,14 @@ paths:
         hidden/logout and synchronize on return.
         Once HTTP 200 is committed, no new status or JSON error replaces the
         stream: close it, optionally with closing. Existing GETs remain the
-        source of truth. No inbox, polling, bus or scheduler is introduced.
+        source of truth. No polling or scheduler is introduced; the bell
+        (notifications tag) is the only inbox.
         Administrators only receive keys they are authorized to query.
-        Producers cover payments/contracts and, with TAR-376, guest/access,
-        profile/document, stay, environment, expense and fine mutations after
-        commit. Passage of time does not independently emit invalidations.
+        Producers are the confirmed domain events of the backend: payments,
+        contracts, guest/access, profile/document, stay, environment, expense,
+        fine and bell mutations, after commit. The start of a business day of
+        Lima (the first request of the day) sends ALL to every open stream:
+        what the date derives (dues, arrears, terms) is reloaded.
         Deploy compatible consumers before enabling new resource keys.
       security: [{ cookieAuth: [] }]
       x-roles: [ADMIN]
