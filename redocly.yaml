@@ -1,6 +1,7 @@
 # Lint del spec del BFF. Los dos avisos apagados son deliberados: la licencia es propietaria y no
-# tiene URL, y PasswordChangeRequired documenta un 403 que aplica a todo endpoint autenticado
-# (OpenAPI 3.0 no tiene respuestas globales), por eso ninguna operación lo referencia.
+# tiene URL, y PasswordChangeRequired (un 403 de todo endpoint autenticado) y ServiceBusy (un 503
+# de toda operación) documentan respuestas globales: OpenAPI 3.0 no las tiene, por eso ninguna
+# operación las referencia.
 extends:
   - recommended
 rules:
