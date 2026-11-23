@@ -47,7 +47,14 @@ info:
     when tabs that share the cookies race. A refresh does not rotate the CSRF
     cookie. An account may hold several sessions (one per device); logout
     closes only its own.
-  version: "0.28.0"
+    Service busy (TAR-204): any operation can answer 503 `SERVICE_BUSY`
+    with a `Retry-After` header (response `ServiceBusy`) when the database
+    could not serve it in time: no free connection within 5 seconds, or a
+    statement past its 30-second limit. Nothing of that request was saved;
+    the client may retry it after the seconds of `Retry-After`. A 503 of a
+    file operation with `FILE_STORAGE_UNAVAILABLE` is a different failure,
+    of the file storage.
+  version: "0.29.0"
   license:
     name: Proprietary - all rights reserved (Tarimat Wasi)
 servers:
@@ -3761,6 +3768,19 @@ components:
         deletion, only a replacement that won: an already deleted document is a 204). A single
         lookup by `(guest_id, id)` answers all cases with the same `message`, so the
         response does not reveal whether the guest or the document exists
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    ServiceBusy:
+      description: >
+        `SERVICE_BUSY`: the database could not serve the request in time (no
+        free connection within 5 s, or a statement past its 30 s limit);
+        nothing was saved. Any operation can answer it (OpenAPI 3.0 has no
+        global responses, so none references it): retry after `Retry-After`
+      headers:
+        Retry-After:
+          description: Seconds until the client may retry
+          schema: { type: integer, minimum: 1 }
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
