@@ -54,7 +54,7 @@ info:
     the client may retry it after the seconds of `Retry-After`. A 503 of a
     file operation with `FILE_STORAGE_UNAVAILABLE` is a different failure,
     of the file storage.
-  version: "0.30.0"
+  version: "0.30.1"
   license:
     name: Proprietary - all rights reserved (Tarimat Wasi)
 servers:
@@ -362,7 +362,8 @@ paths:
       description: >
         The bell of a temporary guest, the same as /guest/notifications in its
         own area (a guest only reaches the area of its type): PAYMENT_APPROVED
-        and PAYMENT_REJECTED of its payments and PAYMENT_DUE of its stay. Text
+        and PAYMENT_REJECTED of its payments, PAYMENT_DUE of its stay and
+        REFUND_CREATED when the surplus of its stay is returned. Text
         is rendered in Spanish by the server when read. The live key
         `guest.notifications` invalidates this list and the count when a new
         notification arrives; reading updates the current tab only. Retention:
@@ -4173,7 +4174,9 @@ components:
         not part of the guest's debt), so the notification is the whole
         content and opens nothing.
         Temporary guest — PAYMENT: GET /temporary-guest/payments/{id}; GUEST
-        (PAYMENT_DUE of a stay): GET /temporary-guest/payment-status.
+        (PAYMENT_DUE of a stay): GET /temporary-guest/payment-status; REFUND:
+        GET /temporary-guest/payment-status, whose `surplus` shows the refund
+        (a stay keeps no credit: what was paid over is returned, RN-38, RN-39).
         A kind the client does not know opens nothing (x-extensible-enum).
       properties:
         kind:
